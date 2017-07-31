@@ -7,3 +7,7 @@ This scripts enables the following operations:
 * Remove all modifiers from a mesh
 * Toggle on/off all modifiers
 * Toggle on/off specified modifiers (in a custom property named Modifiers)
+
+## lichtwerk_MeshTransfer
+This script is copyright Philipp Oeser.
+Enables transfer of vertex groups from one mesh to another
