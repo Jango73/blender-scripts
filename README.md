@@ -1,5 +1,5 @@
 # blender-scripts
-Blender utility scripts
+Blender utility scripts for version 2.7x
 
 ## mesh_modifiers_utilities.py
 This scripts enables the following operations:
