@@ -1,6 +1,6 @@
 # Blender 2.8
 #
-# This scripts refreshes the proxy for an armature in a linked collection
+# This scripts refreshes the proxy for an armature that exists in a linked collection
 # Useful when you have made changes to bone constraints of an armature in blender file A
 # and wish to have those constraints applied to a proxy in blender file B that links to
 # your armature in file A
@@ -12,11 +12,11 @@
 #   (This new proxy contains fresh new bone constraints)
 # - From <firstFrame> to <lastFrame>, jumping every <frameStep> frames, copies the pose from the
 #   copied proxy to the new proxy
-# - Delete the copied proxy (contains old bone constraints)
+# - Deletes the copied proxy (the one that contains old bone constraints)
 #
 # Usage:
-# - Make sure auto keyframing is enabled
-# - Make sure your armature proxy and the collection it comes from are visible
+# - Make sure auto keyframing is enabled ('Auto Keying' in timeline view)
+# - Make sure your armature proxy is visible and selected
 # - Set the variables below to suit your scene needs:
 #   * firstFrame: start of animation for pose copies
 #   * lastFrame: end of animation for pose copies
@@ -31,7 +31,6 @@ frameStep = 10
 def getFirstArmature(list):
     print(list)
     armatures = [ob for ob in list if ob.type == 'ARMATURE']
-    print(armatures)
     return armatures[0]
 
 def copyPose(context, source, target):
@@ -43,16 +42,12 @@ def copyPose(context, source, target):
         bpy.ops.pose.copy()
         bpy.ops.object.mode_set(mode='OBJECT')
 
-        print(context.view_layer.objects.active)
-
         context.view_layer.objects.active = target
         bpy.ops.object.mode_set(mode='POSE')
         for b in source.data.bones:
             b.select = True
         bpy.ops.pose.paste()
         bpy.ops.object.mode_set(mode='OBJECT')
-
-        print(context.view_layer.objects.active)
 
 def refreshArmatureProxy(context):
 
@@ -62,27 +57,44 @@ def refreshArmatureProxy(context):
         return {'CANCELLED'}
 
     coll = source.users_collection[0]
-    temp = source.copy()
-    temp.name = "toto"
-    coll.objects.link(temp)
+    old_proxy_object = source.copy()
+    old_proxy_object.name = "foobar"
+    coll.objects.link(old_proxy_object)
+
+    old_proxy_show_in_front = old_proxy_object.show_in_front
 
     bones = source.proxy
     bones_collection = source.proxy_collection
-    temp.select_set(False)
+    bones_collection_hide_viewport = bones_collection.hide_viewport
+    bones_collection.hide_viewport = False
+    old_proxy_object.select_set(False)
     bpy.ops.object.delete()
 
     context.view_layer.objects.active = bones_collection
-    target = bpy.ops.object.proxy_make(object=bones.name)
-    target = context.view_layer.objects.active
+    target_proxy_object = bpy.ops.object.proxy_make(object=bones.name)
+    target_proxy_object = context.view_layer.objects.active
 
+    # Copy every nth frame from old proxy (old_proxy_object) to new proxy (target_proxy_object)
     for f in range(firstFrame, lastFrame + 1, frameStep):
         bpy.context.scene.frame_set(f)
-        copyPose(context, temp, target)
+        copyPose(context, old_proxy_object, target_proxy_object)
 
+    bones_collection.hide_viewport = bones_collection_hide_viewport
     bones_collection.select_set(False)
-    target.select_set(False)
-    temp.select_set(True)
+    target_proxy_object.show_in_front = old_proxy_show_in_front
+    target_proxy_object.select_set(False)
+
+    # Copy properties from old proxy to new proxy
+    # (Only those existing in new proxy)
+    for p in old_proxy_object.keys():
+        if not p.startswith("_"):
+            if p in target_proxy_object.keys():
+                target_proxy_object[p] = old_proxy_object[p]
+
+    old_proxy_object.select_set(True)
     bpy.ops.object.delete()
+
+    target_proxy_object.select_set(True)
 
 if __name__ == "__main__":
     refreshArmatureProxy(bpy.context)
