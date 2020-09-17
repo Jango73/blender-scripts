@@ -4,7 +4,8 @@ Blender utility scripts for version 2.7x
 ## Version 2.9
 
 ### RefreshArmatureProxy.py 
-Implements missing functionality with armature proxies: refresh the constraints and properties when they have been modified in the source file.
+* Implements missing functionality with armature proxies: refresh the constraints and properties when they have been modified in the source file.
+  * Does this by creating a new proxy and copying the animation every nth frame (parameters set in the script).
 
 ## Version 2.7x
 
@@ -19,5 +20,4 @@ This scripts enables the following operations:
 ### lichtwerk_MeshTransfer
 This script is copyright Philipp Oeser.
 
-Enables transfer of vertex groups from one mesh to another
-
+* Enables transfer of vertex groups from one mesh to another
