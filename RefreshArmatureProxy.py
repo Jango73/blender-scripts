@@ -1,4 +1,4 @@
-# Blender 2.8
+# Blender 2.9
 #
 # This scripts refreshes the proxy for an armature that exists in a linked collection
 # Useful when you have made changes to bone constraints of an armature in blender file A
