@@ -16,16 +16,13 @@
 #
 # Usage:
 # - Make sure auto keyframing is enabled ('Auto Keying' in timeline view)
-# - Make sure your armature proxy is visible and selected
-# - Set the variables below to suit your scene needs:
-#   * firstFrame: start of animation for pose copies
-#   * lastFrame: end of animation for pose copies
+# - Make sure your armature proxy is visible and selected, in object mode
+# - Set animation start and end as desired
+# - Set the variable below to suit your scene needs:
 #   * frameStep: numbe of frames to jump after each pose copy
 
 import bpy
 
-firstFrame = 0
-lastFrame = 20
 frameStep = 10
 
 def getFirstArmature(list):
@@ -44,7 +41,7 @@ def copyPose(context, source, target):
 
         context.view_layer.objects.active = target
         bpy.ops.object.mode_set(mode='POSE')
-        for b in source.data.bones:
+        for b in target.data.bones:
             b.select = True
         bpy.ops.pose.paste()
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -62,6 +59,7 @@ def refreshArmatureProxy(context):
     coll.objects.link(old_proxy_object)
 
     old_proxy_show_in_front = old_proxy_object.show_in_front
+    current_frame = bpy.context.scene.frame_current
 
     bones = source.proxy
     bones_collection = source.proxy_collection
@@ -75,12 +73,13 @@ def refreshArmatureProxy(context):
     target_proxy_object = context.view_layer.objects.active
 
     # Copy every nth frame from old proxy (old_proxy_object) to new proxy (target_proxy_object)
-    for f in range(firstFrame, lastFrame + 1, frameStep):
+    for f in range(bpy.context.scene.frame_start, bpy.context.scene.frame_end + 1, frameStep):
         bpy.context.scene.frame_set(f)
         copyPose(context, old_proxy_object, target_proxy_object)
 
     bones_collection.hide_viewport = bones_collection_hide_viewport
     bones_collection.select_set(False)
+
     target_proxy_object.show_in_front = old_proxy_show_in_front
     target_proxy_object.select_set(False)
 
@@ -93,6 +92,15 @@ def refreshArmatureProxy(context):
 
     old_proxy_object.select_set(True)
     bpy.ops.object.delete()
+
+    target_proxy_object.hide_viewport = True
+    target_proxy_object.hide_render = True
+
+    target_proxy_object.hide_viewport = False
+    target_proxy_object.hide_render = False
+
+    bpy.context.scene.frame_set(bpy.context.scene.frame_start)
+    bpy.context.scene.frame_set(current_frame)
 
     target_proxy_object.select_set(True)
 
