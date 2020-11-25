@@ -3,6 +3,7 @@
 #
 # This scripts copies the bone constraints from one armature to another.
 # Select the destination armature, select the source armature and run the script.
+# Both armatures should have same amount of bones with same name.
 
 import bpy
 
@@ -39,17 +40,17 @@ def copyArmatureConstraints(context):
         bone1 = source.pose.bones[bone.name]
         bone2 = target.pose.bones[bone.name]
 
-        for constraint in bone2.constraints:
-            bone2.constraints.remove(constraint)
+        if bone2 is not None:
+            for constraint in bone2.constraints:
+                bone2.constraints.remove(constraint)
 
-        for constraint in bone1.constraints:
-            bone2.constraints.copy(constraint)
+            for constraint in bone1.constraints:
+                bone2.constraints.copy(constraint)
 
-        for constraint in bone2.constraints:
-            if hasattr(constraint, 'target'):
-                if constraint.target == source:
-                    constraint.target = target
-
+            for constraint in bone2.constraints:
+                if hasattr(constraint, 'target'):
+                    if constraint.target == source:
+                        constraint.target = target
 
 if __name__ == "__main__":
     copyArmatureConstraints(bpy.context)
