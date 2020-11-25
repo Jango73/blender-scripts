@@ -1,5 +1,5 @@
 # --------------------------------------------------------------------------
-# Mesh Modifiers Utilities (author Guillaume Darier)
+# Mesh Modifiers Utilities (author Jango73)
 # - Copy the modifiers from a mesh to another
 # - Remove all modifiers from a mesh
 # - Toggle on/off all modifiers
@@ -26,7 +26,7 @@
 
 bl_info = {
     "name": "Modifier utilities",
-    "author": "Guillaume Darier",
+    "author": "Jango73",
     "version": (1, 0),
     "blender": (2, 57, 0),
     "location": "Tools > Modifier utilities",

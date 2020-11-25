@@ -1,4 +1,5 @@
 # Blender 2.9
+# Author Jango73
 #
 # This scripts refreshes the proxy for an armature that exists in a linked collection
 # Useful when you have made changes to bone constraints of an armature in blender file A
@@ -24,11 +25,6 @@
 import bpy
 
 frameStep = 10
-
-def getFirstArmature(list):
-    print(list)
-    armatures = [ob for ob in list if ob.type == 'ARMATURE']
-    return armatures[0]
 
 def copyPose(context, source, target):
     if bpy.ops.object.mode_set.poll():
