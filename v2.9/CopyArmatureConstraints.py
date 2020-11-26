@@ -2,7 +2,7 @@
 # Author Jango73
 #
 # This scripts copies the bone constraints from one armature to another.
-# Select the destination armature, select the source armature and run the script.
+# Select the source armature, select the destination armature and run the script.
 # Both armatures should have same amount of bones with same name.
 
 import bpy

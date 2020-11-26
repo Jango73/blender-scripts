@@ -14,6 +14,9 @@ Implements missing functionality with armature proxies:
 ### RemoveEmptyGroups.py
 * Removes, from an object, all vertex groups that do not contain values that are above zero (above 0.01).
 
+### SyncObjectProperties.py
+* Synchronizes two objects' custom properties
+
 ## Scripts for Blender 2.6, in /v2.6
 
 ### lichtwerk_MeshTransfer
