@@ -45,9 +45,8 @@ Launch from "Tools -> Modifier utilities"
 
 Additional links:
     Author Site:
-    e-mail: guillaumed00 {at} gmail {dot} com
+    e-mail: therealjango73 {at} gmail {dot} com
 """
-
 
 import bpy
 import bmesh
