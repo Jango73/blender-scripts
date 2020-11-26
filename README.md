@@ -10,6 +10,9 @@ Blender utility scripts for various versions.
 ### CopyArmatureConstraints.py
 * Copies all bone constraints from one armature to another, using bone names for matching.
 
+### RemoveEmptyGroups.py
+* Removes, from an object, all vertex groups that do not contain values that are above zero (above 0.01).
+
 ## Scripts for Blender 2.7x
 
 ### mesh_modifiers_utilities.py
