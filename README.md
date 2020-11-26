@@ -1,7 +1,7 @@
 # blender-scripts
-Blender utility scripts for version 2.7x
+Blender utility scripts for various versions.
 
-## Version 2.9
+## Scripts for Blender 2.9
 
 ### RefreshArmatureProxy.py 
 * Implements missing functionality with armature proxies: refresh the constraints and properties when they have been modified in the source file.
@@ -10,7 +10,7 @@ Blender utility scripts for version 2.7x
 ### CopyArmatureConstraints.py
 * Copies all bone constraints from one armature to another, using bone names for matching.
 
-## Version 2.7x
+## Scripts for Blender 2.7x
 
 ### mesh_modifiers_utilities.py
 This scripts enables the following operations:
