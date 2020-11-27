@@ -3,6 +3,7 @@
 #
 # This scripts copies the properties from one object to another object.
 # Only the properties not existing in the 2nd object are copied from the 1st.
+# Select the source armature, select the destination armature and run the script.
 
 import bpy
 
