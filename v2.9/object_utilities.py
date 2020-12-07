@@ -164,6 +164,20 @@ class OBJECT_OT_CleanUpMaterialsAndImages(bpy.types.Operator):
     def execute(self, context):
         return cleanUpMaterialsAndImages(context)
 
+class SCENE_OT_ToggleRenderers(bpy.types.Operator):
+    """Toggle Renderers"""
+    bl_idname = "scene.toggle_renderers"
+    bl_label = "Toggle renderers"
+    bl_description = "Toggle renderers (Cycles and Workbench)"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        if bpy.context.scene.render.engine == 'CYCLES':
+            bpy.context.scene.render.engine = 'BLENDER_WORKBENCH'
+        else:
+            bpy.context.scene.render.engine = 'CYCLES'
+        return {'FINISHED'}
+
 # -----------------------------------------------------------------------------
 # Panels
 
@@ -200,22 +214,55 @@ class OBJECT_PT_misc_utilities(bpy.types.Panel):
         layout = self.layout
         layout.operator("object.clean_up_materials_and_images")
 
+class SCENE_PT_render_utilities(bpy.types.Panel):
+    bl_idname = "SCENE_PT_render_utilities"
+    bl_label = "Render utilities"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Edit"
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("scene.toggle_renderers")
+
 # -----------------------------------------------------------------------------
 # Registering
+
+addon_keymaps = []
 
 def register():
     bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
+    bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(OBJECT_PT_object_utilities)
     bpy.utils.register_class(OBJECT_PT_misc_utilities)
+    bpy.utils.register_class(SCENE_PT_render_utilities)
+
+    # handle the keymap
+    wm = bpy.context.window_manager
+    kc = wm.keyconfigs.addon
+    if kc:
+        km = wm.keyconfigs.addon.keymaps.new(name='3D View', space_type='VIEW_3D')
+        kmi = km.keymap_items.new(SCENE_OT_ToggleRenderers.bl_idname, type='R', value='PRESS', alt=True, shift=True)
+        addon_keymaps.append((km, kmi))
 
 def unregister():
+    for km, kmi in addon_keymaps:
+        km.keymap_items.remove(kmi)
+    addon_keymaps.clear()
+
     bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
+    bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
     bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
+    bpy.utils.unregister_class(SCENE_PT_render_utilities)
 
 if __name__ == "__main__":
     register()
