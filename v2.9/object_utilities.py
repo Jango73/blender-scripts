@@ -30,6 +30,23 @@ import re
 
 # -----------------------------------------------------------------------------
 
+def getMirroredName(name):
+    if '.R' in name:
+        return name.replace('.R','.L')
+
+    if '.r' in name:
+        return name.replace('.r','.l')
+
+    if name.startswith('Right'):
+        return name.replace('Right', 'Left')
+
+    if name.startswith('right'):
+        return name.replace('right', 'left')
+    
+    return ''
+
+# -----------------------------------------------------------------------------
+
 def syncObjectProperties(context):
     target = context.selected_objects[0]
 
@@ -70,21 +87,19 @@ def removeEmptyVertexGroups(context):
 
     vgroup_used = {i: False for i, k in enumerate(ob.vertex_groups)}
     vgroup_names = {i: k.name for i, k in enumerate(ob.vertex_groups)}
+    vgroup_name_list = list(vgroup_names.values())
 
     for v in ob.data.vertices:
         for g in v.groups:
-            if g.weight > 0.01:
-                vgroup_used[g.group] = True
-                vgroup_name = vgroup_names[g.group]
-                armatch = re.search('((.R|.L)(.(\d){1,}){0,1})(?!.)', vgroup_name)
-                if armatch != None:
-                    tag = armatch.group()
-                    mirror_tag =  tag.replace(".R", ".L") if armatch.group(2) == ".R" else tag.replace(".L", ".R") 
-                    mirror_vgname = vgroup_name.replace(tag, mirror_tag)
-                    for i, name in sorted(vgroup_names.items(), reverse=True):
-                        if mirror_vgname == name:
-                            vgroup_used[i] = True
-                            break
+
+            mirrored_name = getMirroredName(vgroup_names[g.group])
+
+            if mirrored_name in vgroup_name_list:
+                vgroup_used[g.group] = vgroup_used[vgroup_name_list.index(mirrored_name)]
+            else:
+                if g.weight > 0.01:
+                    vgroup_used[g.group] = True
+
     for i, used in sorted(vgroup_used.items(), reverse=True):
         if not used:
             ob.vertex_groups.remove(ob.vertex_groups[i])
