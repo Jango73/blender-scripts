@@ -3,19 +3,13 @@ Blender utility scripts for various versions.
 
 ## Scripts for Blender 2.9, in /v2.9
 
-### CopyArmatureConstraints.py
-* Copies all bone constraints from one armature to another, using bone names for matching.
+### armature_utilities.py
+* Refresh the constraints and properties of an armature proxy that links to another blender file.
+* Copy all bone constraints from one armature to another, using bone names for matching.
 
-### RefreshArmatureProxy.py 
-Implements missing functionality with armature proxies:
-
-* Refreshes the constraints and properties when they have been modified in the source file.
-
-### RemoveEmptyGroups.py
-* Removes, from an object, all vertex groups that do not contain values that are above zero (above 0.01).
-
-### SyncObjectProperties.py
-* Synchronizes two objects' custom properties
+### object_utilities.py
+* Synchronize two objects' custom properties
+* Remove, from an object, all vertex groups that contain only zero values (below 0.01).
 
 ## Scripts for Blender 2.6, in /v2.6
 
