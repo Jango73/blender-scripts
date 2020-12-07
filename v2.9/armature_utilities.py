@@ -151,6 +151,7 @@ def copyArmatureConstraints(context):
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
+# Operators
 
 class OBJECT_OT_RefreshArmatureProxy(bpy.types.Operator):
     """Refresh Armature Proxy"""
@@ -171,6 +172,9 @@ class OBJECT_OT_CopyArmatureConstraints(bpy.types.Operator):
 
     def execute(self, context):
         return copyArmatureConstraints(context)
+
+# -----------------------------------------------------------------------------
+# Panels
 
 class OBJECT_PT_armature_utilities(bpy.types.Panel):
     bl_idname = "OBJECT_PT_armature_utilities"
@@ -195,6 +199,9 @@ class OBJECT_PT_armature_utilities(bpy.types.Panel):
         box = layout.box()
         box.label(text="Misc")
         box.operator("object.copy_armature_constraints")
+
+# -----------------------------------------------------------------------------
+# Registering
 
 def register():
     bpy.utils.register_class(OBJECT_OT_RefreshArmatureProxy)

@@ -93,6 +93,32 @@ def removeEmptyVertexGroups(context):
 
 # -----------------------------------------------------------------------------
 
+def cleanUpMaterialsAndImages(context):
+    # iterate over all materials in the file
+    for material in bpy.data.materials:
+
+        # don't do anything if the material has any users.
+        if material.users:
+            continue
+
+        # remove the material otherwise
+        bpy.data.materials.remove(material)
+
+    # iterate over all images in the file
+    for image in bpy.data.images:
+
+        # don't do anything if the image has any users.
+        if image.users:
+            continue
+
+        # remove the image otherwise
+        bpy.data.images.remove(image)
+
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+# Operators
+
 class OBJECT_OT_SyncObjectProperties(bpy.types.Operator):
     """Sync Object Properties"""
     bl_idname = "object.sync_object_properties"
@@ -113,6 +139,19 @@ class OBJECT_OT_RemoveEmptyVertexGroups(bpy.types.Operator):
     def execute(self, context):
         return removeEmptyVertexGroups(context)
 
+class OBJECT_OT_CleanUpMaterialsAndImages(bpy.types.Operator):
+    """Clean Up Materials And Images"""
+    bl_idname = "object.clean_up_materials_and_images"
+    bl_label = "Clean up materials and images"
+    bl_description = "Cleans up materials and images"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return cleanUpMaterialsAndImages(context)
+
+# -----------------------------------------------------------------------------
+# Panels
+
 class OBJECT_PT_object_utilities(bpy.types.Panel):
     bl_idname = "OBJECT_PT_object_utilities"
     bl_label = "Object utilities"
@@ -130,15 +169,38 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         layout.operator("object.sync_object_properties")
         layout.operator("object.remove_empty_vertex_groups")
 
+class OBJECT_PT_misc_utilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_misc_utilities"
+    bl_label = "Misc utilities"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Edit"
+    bl_context = 'objectmode'
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("object.clean_up_materials_and_images")
+
+# -----------------------------------------------------------------------------
+# Registering
+
 def register():
     bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
+    bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.register_class(OBJECT_PT_object_utilities)
+    bpy.utils.register_class(OBJECT_PT_misc_utilities)
 
 def unregister():
     bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
+    bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
+    bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
 
 if __name__ == "__main__":
     register()
