@@ -71,9 +71,13 @@ def refreshArmatureProxy(context, frameStep):
     target_proxy_object = context.view_layer.objects.active
 
     # Copy every nth frame from old proxy (old_proxy_object) to new proxy (target_proxy_object)
+    context.window_manager.progress_begin(bpy.context.scene.frame_start, bpy.context.scene.frame_end + 1)
     for f in range(bpy.context.scene.frame_start, bpy.context.scene.frame_end + 1, frameStep):
+        context.window_manager.progress_update(f)
         bpy.context.scene.frame_set(f)
         copyPose(context, old_proxy_object, target_proxy_object)
+
+    context.window_manager.progress_end()
 
     bones_collection.hide_viewport = bones_collection_hide_viewport
     bones_collection.select_set(False)
