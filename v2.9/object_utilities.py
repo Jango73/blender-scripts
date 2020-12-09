@@ -172,10 +172,10 @@ class SCENE_OT_ToggleRenderers(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        if bpy.context.scene.render.engine == 'CYCLES':
-            bpy.context.scene.render.engine = 'BLENDER_WORKBENCH'
+        if context.scene.render.engine == 'CYCLES':
+            context.scene.render.engine = 'BLENDER_WORKBENCH'
         else:
-            bpy.context.scene.render.engine = 'CYCLES'
+            context.scene.render.engine = 'CYCLES'
         return {'FINISHED'}
 
 # -----------------------------------------------------------------------------

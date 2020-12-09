@@ -57,7 +57,7 @@ def refreshArmatureProxy(context, frameStep):
     coll.objects.link(old_proxy_object)
 
     old_proxy_show_in_front = old_proxy_object.show_in_front
-    current_frame = bpy.context.scene.frame_current
+    current_frame = context.scene.frame_current
 
     bones = source.proxy
     bones_collection = source.proxy_collection
@@ -71,10 +71,10 @@ def refreshArmatureProxy(context, frameStep):
     target_proxy_object = context.view_layer.objects.active
 
     # Copy every nth frame from old proxy (old_proxy_object) to new proxy (target_proxy_object)
-    context.window_manager.progress_begin(bpy.context.scene.frame_start, bpy.context.scene.frame_end + 1)
-    for f in range(bpy.context.scene.frame_start, bpy.context.scene.frame_end + 1, frameStep):
+    context.window_manager.progress_begin(context.scene.frame_start, context.scene.frame_end + 1)
+    for f in range(context.scene.frame_start, context.scene.frame_end + 1, frameStep):
         context.window_manager.progress_update(f)
-        bpy.context.scene.frame_set(f)
+        context.scene.frame_set(f)
         copyPose(context, old_proxy_object, target_proxy_object)
 
     context.window_manager.progress_end()
@@ -101,8 +101,8 @@ def refreshArmatureProxy(context, frameStep):
     target_proxy_object.hide_viewport = False
     target_proxy_object.hide_render = False
 
-    bpy.context.scene.frame_set(bpy.context.scene.frame_start)
-    bpy.context.scene.frame_set(current_frame)
+    context.scene.frame_set(context.scene.frame_start)
+    context.scene.frame_set(current_frame)
 
     target_proxy_object.select_set(True)
 
@@ -131,7 +131,7 @@ def copyArmatureConstraints(context):
 
     bpy.ops.object.posemode_toggle()
     bpy.ops.pose.select_all(action='SELECT')
-    sourceBones = bpy.context.selected_pose_bones
+    sourceBones = context.selected_pose_bones
     bpy.ops.pose.select_all(action='DESELECT')
     bpy.ops.object.posemode_toggle()
 
