@@ -47,7 +47,7 @@ def getMirroredName(name):
 
 # -----------------------------------------------------------------------------
 
-def syncObjectProperties(context):
+def syncObjectProperties(self, context):
     target = context.selected_objects[0]
 
     if target is None:
@@ -71,6 +71,8 @@ def syncObjectProperties(context):
         if not p.startswith("_"):
             if p not in target.keys():
                 target[p] = source[p]
+
+    self.report({'INFO'}, "Synced " + target.name + " properties with " + source.name)
 
     return {'FINISHED'}
 
@@ -142,7 +144,7 @@ class OBJECT_OT_SyncObjectProperties(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        return syncObjectProperties(context)
+        return syncObjectProperties(self, context)
 
 class OBJECT_OT_RemoveEmptyVertexGroups(bpy.types.Operator):
     """Remove Empty Vertex Groups"""

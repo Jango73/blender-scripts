@@ -108,7 +108,7 @@ def refreshArmatureProxy(context, frameStep):
 
     return {'FINISHED'}
 
-def copyArmatureConstraints(context):
+def copyArmatureConstraints(self, context):
     target = context.selected_objects[0]
 
     if target is None:
@@ -152,6 +152,8 @@ def copyArmatureConstraints(context):
                     if constraint.target == source:
                         constraint.target = target
 
+    self.report({'INFO'}, "Copied " + source.name + " bone constraints to " + target.name)
+
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
@@ -175,7 +177,7 @@ class OBJECT_OT_CopyArmatureConstraints(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        return copyArmatureConstraints(context)
+        return copyArmatureConstraints(self, context)
 
 # -----------------------------------------------------------------------------
 # Panels
