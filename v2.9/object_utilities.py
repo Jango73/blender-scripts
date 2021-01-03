@@ -180,6 +180,17 @@ class SCENE_OT_ToggleRenderers(bpy.types.Operator):
             context.scene.render.engine = 'CYCLES'
         return {'FINISHED'}
 
+class SCENE_OT_PauseRender(bpy.types.Operator):
+    """Pause Render"""
+    bl_idname = "scene.pause_render"
+    bl_label = "Pause render"
+    bl_description = "Pause render in viewport"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        context.scene.cycles.preview_pause =  not context.scene.cycles.preview_pause
+        return {'FINISHED'}
+
 # -----------------------------------------------------------------------------
 # Panels
 
@@ -230,6 +241,7 @@ class SCENE_PT_render_utilities(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.operator("scene.toggle_renderers")
+        layout.operator("scene.pause_render")
 
 # -----------------------------------------------------------------------------
 # Registering
@@ -241,6 +253,7 @@ def register():
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
+    bpy.utils.register_class(SCENE_OT_PauseRender)
     bpy.utils.register_class(OBJECT_PT_object_utilities)
     bpy.utils.register_class(OBJECT_PT_misc_utilities)
     bpy.utils.register_class(SCENE_PT_render_utilities)
@@ -262,6 +275,7 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
+    bpy.utils.unregister_class(SCENE_OT_PauseRender)
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
     bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
     bpy.utils.unregister_class(SCENE_PT_render_utilities)
