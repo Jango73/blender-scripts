@@ -45,7 +45,7 @@ def copyPose(context, source, target):
         bpy.ops.pose.paste()
         bpy.ops.object.mode_set(mode='OBJECT')
 
-def refreshArmatureProxy(context, frameStep):
+def refreshArmatureProxy(context):
     source = context.selected_objects[0]
 
     if source is None:
@@ -70,14 +70,8 @@ def refreshArmatureProxy(context, frameStep):
     target_proxy_object = bpy.ops.object.proxy_make(object=bones.name)
     target_proxy_object = context.view_layer.objects.active
 
-    # Copy every nth frame from old proxy (old_proxy_object) to new proxy (target_proxy_object)
-    context.window_manager.progress_begin(context.scene.frame_start, context.scene.frame_end + 1)
-    for f in range(context.scene.frame_start, context.scene.frame_end + 1, frameStep):
-        context.window_manager.progress_update(f)
-        context.scene.frame_set(f)
-        copyPose(context, old_proxy_object, target_proxy_object)
-
-    context.window_manager.progress_end()
+    target_proxy_object.animation_data_create()
+    target_proxy_object.animation_data.action = old_proxy_object.animation_data.action
 
     bones_collection.hide_viewport = bones_collection_hide_viewport
     bones_collection.select_set(False)
@@ -167,7 +161,7 @@ class OBJECT_OT_RefreshArmatureProxy(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        return refreshArmatureProxy(context, context.scene.armature_refresh_steps)
+        return refreshArmatureProxy(context)
 
 class OBJECT_OT_CopyArmatureConstraints(bpy.types.Operator):
     """Copy Armature Constraints"""
@@ -197,14 +191,8 @@ class OBJECT_PT_armature_utilities(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
 
-        box = layout.box()
-        box.label(text="Refresh")
-        box.prop(context.scene, 'armature_refresh_steps')
-        box.operator("object.refresh_armature_proxy")
-
-        box = layout.box()
-        box.label(text="Misc")
-        box.operator("object.copy_armature_constraints")
+        layout.operator("object.refresh_armature_proxy")
+        layout.operator("object.copy_armature_constraints")
 
 # -----------------------------------------------------------------------------
 # Registering
@@ -214,14 +202,10 @@ def register():
     bpy.utils.register_class(OBJECT_OT_CopyArmatureConstraints)
     bpy.utils.register_class(OBJECT_PT_armature_utilities)
 
-    bpy.types.Scene.armature_refresh_steps = bpy.props.IntProperty(name = "Frame steps", default = 10, min = 1)
-
 def unregister():
     bpy.utils.unregister_class(OBJECT_OT_RefreshArmatureProxy)
     bpy.utils.unregister_class(OBJECT_OT_CopyArmatureConstraints)
     bpy.utils.unregister_class(OBJECT_PT_armature_utilities)
-
-    del bpy.types.Scene.armature_refresh_steps
 
 if __name__ == "__main__":
     register()
