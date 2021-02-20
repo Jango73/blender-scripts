@@ -110,6 +110,25 @@ def removeEmptyVertexGroups(context):
 
 # -----------------------------------------------------------------------------
 
+def removeKeyframesByChannel(self, context, channel):
+    # get active object
+    object = context.active_object
+
+    if object is None:
+        return {'CANCELLED'}
+
+    if object.animation_data:
+        action = object.animation_data.action
+        if action:
+            for fc in action.fcurves:
+                if fc.data_path.endswith(channel):
+                    object.keyframe_delete(fc.data_path)
+
+    self.report({'INFO'}, "Removed " + channel + " type keyframes from active armature (" + object.name + ")")
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
 def cleanUpMaterialsAndImages(context):
     # iterate over all materials in the file
     for material in bpy.data.materials:
@@ -155,6 +174,36 @@ class OBJECT_OT_RemoveEmptyVertexGroups(bpy.types.Operator):
 
     def execute(self, context):
         return removeEmptyVertexGroups(context)
+
+class OBJECT_OT_RemoveLocationKeyframes(bpy.types.Operator):
+    """RemoveLocationKeyframes"""
+    bl_idname = "object.remove_location_keyframes"
+    bl_label = "Remove location keyframes"
+    bl_description = "Removes all location keyframes in active object for current frame"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return removeKeyframesByChannel(self, context, "location")
+
+class OBJECT_OT_RemoveRotationKeyframes(bpy.types.Operator):
+    """RemoveRotationKeyframes"""
+    bl_idname = "object.remove_rotation_keyframes"
+    bl_label = "Remove rotation keyframes"
+    bl_description = "Removes all rotation keyframes in active object for current frame"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return removeKeyframesByChannel(self, context, "rotation_quaternion")
+
+class OBJECT_OT_RemoveScaleKeyframes(bpy.types.Operator):
+    """RemoveScaleKeyframes"""
+    bl_idname = "object.remove_scale_keyframes"
+    bl_label = "Remove scale keyframes"
+    bl_description = "Removes all scale keyframes in active object for current frame"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return removeKeyframesByChannel(self, context, "scale")
 
 class OBJECT_OT_CleanUpMaterialsAndImages(bpy.types.Operator):
     """Clean Up Materials And Images"""
@@ -208,8 +257,13 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("object.sync_object_properties")
-        layout.operator("object.remove_empty_vertex_groups")
+        box = layout.box()
+        box.operator("object.sync_object_properties")
+        box.operator("object.remove_empty_vertex_groups")
+        box = layout.box()
+        box.operator("object.remove_location_keyframes")
+        box.operator("object.remove_rotation_keyframes")
+        box.operator("object.remove_scale_keyframes")
 
 class OBJECT_PT_misc_utilities(bpy.types.Panel):
     bl_idname = "OBJECT_PT_misc_utilities"
@@ -251,6 +305,9 @@ addon_keymaps = []
 def register():
     bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
+    bpy.utils.register_class(OBJECT_OT_RemoveLocationKeyframes)
+    bpy.utils.register_class(OBJECT_OT_RemoveRotationKeyframes)
+    bpy.utils.register_class(OBJECT_OT_RemoveScaleKeyframes)
     bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(SCENE_OT_PauseRender)
@@ -273,6 +330,9 @@ def unregister():
 
     bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
+    bpy.utils.unregister_class(OBJECT_OT_RemoveLocationKeyframes)
+    bpy.utils.unregister_class(OBJECT_OT_RemoveRotationKeyframes)
+    bpy.utils.unregister_class(OBJECT_OT_RemoveScaleKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(SCENE_OT_PauseRender)
