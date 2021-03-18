@@ -110,6 +110,20 @@ def removeEmptyVertexGroups(context):
 
 # -----------------------------------------------------------------------------
 
+def removeAllModifiers(context):
+    # get active object
+    object = context.active_object
+
+    if object is None:
+        return {'CANCELLED'}
+
+    # remove all modifiers
+    object.modifiers.clear()
+
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
 def removeKeyframesByChannel(self, context, channel):
     # get active object
     object = context.active_object
@@ -174,6 +188,16 @@ class OBJECT_OT_RemoveEmptyVertexGroups(bpy.types.Operator):
 
     def execute(self, context):
         return removeEmptyVertexGroups(context)
+
+class OBJECT_OT_RemoveAllModifiers(bpy.types.Operator):
+    """Remove All Modifiers"""
+    bl_idname = "object.remove_all_modifiers"
+    bl_label = "Remove all modifiers"
+    bl_description = "Removes all modifiers"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return removeAllModifiers(context)
 
 class OBJECT_OT_RemoveLocationKeyframes(bpy.types.Operator):
     """RemoveLocationKeyframes"""
@@ -260,6 +284,7 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box = layout.box()
         box.operator("object.sync_object_properties")
         box.operator("object.remove_empty_vertex_groups")
+        box.operator("object.remove_all_modifiers")
         box = layout.box()
         box.operator("object.remove_location_keyframes")
         box.operator("object.remove_rotation_keyframes")
@@ -305,6 +330,7 @@ addon_keymaps = []
 def register():
     bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
+    bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
     bpy.utils.register_class(OBJECT_OT_RemoveLocationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveRotationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveScaleKeyframes)
@@ -330,6 +356,7 @@ def unregister():
 
     bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
+    bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
     bpy.utils.unregister_class(OBJECT_OT_RemoveLocationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveRotationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveScaleKeyframes)
