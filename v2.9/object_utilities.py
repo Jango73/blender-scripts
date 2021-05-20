@@ -136,7 +136,10 @@ def removeKeyframesByChannel(self, context, channel):
         if action:
             for fc in action.fcurves:
                 if fc.data_path.endswith(channel):
-                    object.keyframe_delete(fc.data_path)
+                    try:
+                        object.keyframe_delete(fc.data_path)
+                    except TypeError:
+                        print(fc.data_path + " channel does not exist. Ignoring.")
 
     self.report({'INFO'}, "Removed " + channel + " type keyframes from active armature (" + object.name + ")")
     return {'FINISHED'}
