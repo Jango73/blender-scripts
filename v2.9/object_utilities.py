@@ -27,6 +27,169 @@ bl_info = {
 
 import bpy
 import re
+import copy
+
+# -----------------------------------------------------------------------------
+
+def showMessageBox(title = "Message Box", icon = 'INFO', lines=""):
+    myLines=lines
+    def draw(self, context):
+        for n in myLines:
+            self.layout.label(text=n)
+    bpy.context.window_manager.popup_menu(draw, title = title, icon = icon)
+
+# -----------------------------------------------------------------------------
+
+def printToString(targetString, text, no_newline=False):
+
+    temp = targetString.split("\n")
+    if len(temp) > 0:
+        if len(temp[-1]) > 200:
+            targetString += ("\n")
+
+    if (no_newline):
+        targetString += (text)
+    else:
+        targetString += (text + "\n")
+
+    return targetString
+
+# -----------------------------------------------------------------------------
+
+def diffLines(targetString, sourceName, targetName, lines1, lines2):
+    temp = copy.deepcopy(lines1)
+
+    for x in temp:
+        if x in lines2:
+            lines1.remove(x)
+            lines2.remove(x)
+
+    if len(lines1) == 0 and len(lines2) == 0:
+        targetString = printToString(targetString, "No difference")
+        return targetString
+
+    if len(lines1) > 0:
+        targetString = printToString(targetString, "Only in " + sourceName + ":")
+        for x in lines1:
+            targetString = printToString(targetString, x + " ", no_newline=True)
+        targetString = printToString(targetString, "")
+
+    if len(lines2) > 0:
+        targetString = printToString(targetString, "Only in " + targetName + ":")
+        for x in lines2:
+            targetString = printToString(targetString, x + " ", no_newline=True)
+        targetString = printToString(targetString, "")
+
+    return targetString
+
+# -----------------------------------------------------------------------------
+
+def diffObjects(self, context):
+    lineCount = 0
+    diffCount = 0
+    sameCount = 0
+    targetString = ""
+    lines1 = []
+    lines2 = []
+
+    target = context.selected_objects[0]
+
+    if target is None:
+        return {'CANCELLED'}
+
+    # get active object
+    source = context.active_object
+
+    if source is None:
+        return {'CANCELLED'}
+
+    if target == source:
+        if len(context.selected_objects) < 2:
+            return {'CANCELLED'}
+        target = context.selected_objects[1]
+
+    if target is None:
+        return {'CANCELLED'}
+
+    targetString = printToString(targetString, "")
+    targetString = printToString(targetString, "Diff " + source.name + " and " + target.name)
+    targetString = printToString(targetString, "")
+
+    if "_RNA_UI" in source and "_RNA_UI" in target:
+        targetString = printToString(targetString, "[ Custom properties ]")
+
+        props1 = source["_RNA_UI"]
+        props2 = target["_RNA_UI"]
+
+        for p in props1.keys():
+            lines1.append(p.strip())
+        for p in props2.keys():
+            lines2.append(p.strip())
+
+        lines1.sort()
+        lines2.sort()
+        targetString = diffLines(targetString, source.name, target.name, lines1, lines2)
+
+    try:
+        targetString = printToString(targetString, "")
+        targetString = printToString(targetString, "[ Vertex groups ]")
+
+        lines1.clear()
+        lines2.clear()
+
+        for g in source.vertex_groups:
+            lines1.append(g.name.strip())
+        for g in target.vertex_groups:
+            lines2.append(g.name.strip())
+
+        lines1.sort()
+        lines2.sort()
+        targetString = diffLines(targetString, source.name, target.name, lines1, lines2)
+
+    except:
+        pass
+
+    try:
+        targetString = printToString(targetString, "")
+        targetString = printToString(targetString, "[ Vertex colors ]")
+
+        lines1.clear()
+        lines2.clear()
+
+        for v in source.data.vertex_colors.keys():
+            lines1.append(v.strip())
+        for v in target.data.vertex_colors.keys():
+            lines2.append(v.strip())
+
+        lines1.sort()
+        lines2.sort()
+        targetString = diffLines(targetString, source.name, target.name, lines1, lines2)
+
+    except:
+        pass
+
+    try:
+        targetString = printToString(targetString, "")
+        targetString = printToString(targetString, "[ Modifiers ]")
+
+        lines1.clear()
+        lines2.clear()
+
+        for m in source.modifiers:
+            lines1.append(m.name.strip())
+        for m in target.modifiers:
+            lines2.append(m.name.strip())
+
+        lines1.sort()
+        lines2.sort()
+        targetString = diffLines(targetString, source.name, target.name, lines1, lines2)
+
+    except:
+        pass
+
+    showMessageBox(lines=targetString.split("\n"))
+
+    return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
 
@@ -60,6 +223,8 @@ def syncObjectProperties(self, context):
         return {'CANCELLED'}
 
     if target == source:
+        if len(context.selected_objects) < 2:
+            return {'CANCELLED'}
         target = context.selected_objects[1]
 
     if target is None:
@@ -171,6 +336,16 @@ def cleanUpMaterialsAndImages(context):
 
 # -----------------------------------------------------------------------------
 # Operators
+
+class OBJECT_OT_DiffObjectData(bpy.types.Operator):
+    """Diff Object Data"""
+    bl_idname = "object.diff_object_data"
+    bl_label = "Diff object data"
+    bl_description = "Shows difference in object data"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return diffObjects(self, context)
 
 class OBJECT_OT_SyncObjectProperties(bpy.types.Operator):
     """Sync Object Properties"""
@@ -285,6 +460,7 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
+        box.operator("object.diff_object_data")
         box.operator("object.sync_object_properties")
         box.operator("object.remove_empty_vertex_groups")
         box.operator("object.remove_all_modifiers")
@@ -331,6 +507,7 @@ class SCENE_PT_render_utilities(bpy.types.Panel):
 addon_keymaps = []
 
 def register():
+    bpy.utils.register_class(OBJECT_OT_DiffObjectData)
     bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
@@ -357,6 +534,7 @@ def unregister():
         km.keymap_items.remove(kmi)
     addon_keymaps.clear()
 
+    bpy.utils.unregister_class(OBJECT_OT_DiffObjectData)
     bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
