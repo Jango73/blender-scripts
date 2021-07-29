@@ -187,6 +187,33 @@ def diffObjects(self, context):
     except:
         pass
 
+    try:
+        objectType = getattr(source, 'type', '')
+
+        if objectType in ['ARMATURE']:
+            targetString = printToString(targetString, "")
+            targetString = printToString(targetString, "[ Bone constraints ]")
+            bpy.ops.object.mode_set(mode='POSE')
+
+            lines1.clear()
+            lines2.clear()
+
+            for b in source.pose.bones:
+                for c in b.constraints:
+                    lines1.append(b.name.strip() + ":" + c.name.strip())
+            for b in target.pose.bones:
+                for c in b.constraints:
+                    lines2.append(b.name.strip() + ":" + c.name.strip())
+
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+            lines1.sort()
+            lines2.sort()
+            targetString = diffLines(targetString, source.name, target.name, lines1, lines2)
+
+    except:
+        pass
+
     showMessageBox(lines=targetString.split("\n"))
 
     return {'FINISHED'}
