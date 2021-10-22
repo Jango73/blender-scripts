@@ -19,7 +19,7 @@
 bl_info = {
     "name": "Object utilities",
     "author": "Jango73",
-    "version": (1, 0),
+    "version": (1, 2),
     "blender": (2, 80, 0),
     "description": "Operations on objects",
     "category": "Object",
@@ -270,70 +270,63 @@ def syncObjectProperties(self, context):
 
 # -----------------------------------------------------------------------------
 
-def removeEmptyVertexGroups(context):
-    # get active object
-    ob = context.active_object
+def removeEmptyVertexGroups(self, context):
+    for object in context.selected_objects:
 
-    if ob is None:
-        return {'CANCELLED'}
+        object.update_from_editmode()
 
-    ob.update_from_editmode()
+        vgroup_used = {i: False for i, k in enumerate(object.vertex_groups)}
+        vgroup_names = {i: k.name for i, k in enumerate(object.vertex_groups)}
+        vgroup_name_list = list(vgroup_names.values())
 
-    vgroup_used = {i: False for i, k in enumerate(ob.vertex_groups)}
-    vgroup_names = {i: k.name for i, k in enumerate(ob.vertex_groups)}
-    vgroup_name_list = list(vgroup_names.values())
+        for v in object.data.vertices:
+            for g in v.groups:
 
-    for v in ob.data.vertices:
-        for g in v.groups:
+                mirrored_name = getMirroredName(vgroup_names[g.group])
 
-            mirrored_name = getMirroredName(vgroup_names[g.group])
+                if mirrored_name in vgroup_name_list:
+                    vgroup_used[g.group] = vgroup_used[vgroup_name_list.index(mirrored_name)]
+                else:
+                    if g.weight > 0.01:
+                        vgroup_used[g.group] = True
 
-            if mirrored_name in vgroup_name_list:
-                vgroup_used[g.group] = vgroup_used[vgroup_name_list.index(mirrored_name)]
-            else:
-                if g.weight > 0.01:
-                    vgroup_used[g.group] = True
+        for i, used in sorted(vgroup_used.items(), reverse=True):
+            if not used:
+                object.vertex_groups.remove(object.vertex_groups[i])
 
-    for i, used in sorted(vgroup_used.items(), reverse=True):
-        if not used:
-            ob.vertex_groups.remove(ob.vertex_groups[i])
+        self.report({'INFO'}, "Removed empty groups from " + object.name)
 
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
 
-def removeAllModifiers(context):
-    # get active object
-    object = context.active_object
+def removeAllModifiers(self, context):
+    for object in context.selected_objects:
 
-    if object is None:
-        return {'CANCELLED'}
+        # remove all modifiers
+        object.modifiers.clear()
 
-    # remove all modifiers
-    object.modifiers.clear()
+        self.report({'INFO'}, "Removed all modifiers from " + object.name)
 
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
 
 def removeKeyframesByChannel(self, context, channel):
-    # get active object
-    object = context.active_object
+    for object in context.selected_objects:
 
-    if object is None:
-        return {'CANCELLED'}
+        if object.animation_data:
+            action = object.animation_data.action
+            if action:
+                for fc in action.fcurves:
+                    if fc.data_path.endswith(channel):
+                        try:
+                            object.keyframe_delete(fc.data_path)
+                        except TypeError:
+                            print(fc.data_path + " channel does not exist. Ignoring.")
 
-    if object.animation_data:
-        action = object.animation_data.action
-        if action:
-            for fc in action.fcurves:
-                if fc.data_path.endswith(channel):
-                    try:
-                        object.keyframe_delete(fc.data_path)
-                    except TypeError:
-                        print(fc.data_path + " channel does not exist. Ignoring.")
+        self.report({'INFO'}, "Removed " + channel + " type keyframes from " + object.name)
 
-    self.report({'INFO'}, "Removed " + channel + " type keyframes from active armature (" + object.name + ")")
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
@@ -392,7 +385,7 @@ class OBJECT_OT_RemoveEmptyVertexGroups(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        return removeEmptyVertexGroups(context)
+        return removeEmptyVertexGroups(self, context)
 
 class OBJECT_OT_RemoveAllModifiers(bpy.types.Operator):
     """Remove All Modifiers"""
@@ -402,23 +395,33 @@ class OBJECT_OT_RemoveAllModifiers(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        return removeAllModifiers(context)
+        return removeAllModifiers(self, context)
 
 class OBJECT_OT_RemoveLocationKeyframes(bpy.types.Operator):
     """RemoveLocationKeyframes"""
     bl_idname = "object.remove_location_keyframes"
     bl_label = "Remove location keyframes"
-    bl_description = "Removes all location keyframes in active object for current frame"
+    bl_description = "Removes all recorded location keyframes in selected objects at current frame time"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
         return removeKeyframesByChannel(self, context, "location")
 
-class OBJECT_OT_RemoveRotationKeyframes(bpy.types.Operator):
-    """RemoveRotationKeyframes"""
-    bl_idname = "object.remove_rotation_keyframes"
-    bl_label = "Remove rotation keyframes"
-    bl_description = "Removes all rotation keyframes in active object for current frame"
+class OBJECT_OT_RemoveEulerRotationKeyframes(bpy.types.Operator):
+    """RemoveEulerRotationKeyframes"""
+    bl_idname = "object.remove_euler_rotation_keyframes"
+    bl_label = "Remove euler rotation keyframes"
+    bl_description = "Removes all recorded euler rotation keyframes in selected objects at current frame time"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return removeKeyframesByChannel(self, context, "rotation_euler")
+
+class OBJECT_OT_RemoveQuatRotationKeyframes(bpy.types.Operator):
+    """RemoveQuatRotationKeyframes"""
+    bl_idname = "object.remove_quat_rotation_keyframes"
+    bl_label = "Remove quat rotation keyframes"
+    bl_description = "Removes all recorded quat rotation keyframes in selected objects at current frame time"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -428,7 +431,7 @@ class OBJECT_OT_RemoveScaleKeyframes(bpy.types.Operator):
     """RemoveScaleKeyframes"""
     bl_idname = "object.remove_scale_keyframes"
     bl_label = "Remove scale keyframes"
-    bl_description = "Removes all scale keyframes in active object for current frame"
+    bl_description = "Removes all recorded scale keyframes in selected objects at current frame time"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -482,7 +485,7 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return (context.object is not None)
+        return (context.selected_objects is not None)
 
     def draw(self, context):
         layout = self.layout
@@ -493,7 +496,8 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.remove_all_modifiers")
         box = layout.box()
         box.operator("object.remove_location_keyframes")
-        box.operator("object.remove_rotation_keyframes")
+        box.operator("object.remove_euler_rotation_keyframes")
+        box.operator("object.remove_quat_rotation_keyframes")
         box.operator("object.remove_scale_keyframes")
 
 class OBJECT_PT_misc_utilities(bpy.types.Panel):
@@ -539,7 +543,8 @@ def register():
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
     bpy.utils.register_class(OBJECT_OT_RemoveLocationKeyframes)
-    bpy.utils.register_class(OBJECT_OT_RemoveRotationKeyframes)
+    bpy.utils.register_class(OBJECT_OT_RemoveEulerRotationKeyframes)
+    bpy.utils.register_class(OBJECT_OT_RemoveQuatRotationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveScaleKeyframes)
     bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
@@ -566,7 +571,8 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
     bpy.utils.unregister_class(OBJECT_OT_RemoveLocationKeyframes)
-    bpy.utils.unregister_class(OBJECT_OT_RemoveRotationKeyframes)
+    bpy.utils.unregister_class(OBJECT_OT_RemoveEulerRotationKeyframes)
+    bpy.utils.unregister_class(OBJECT_OT_RemoveQuatRotationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveScaleKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
