@@ -8,8 +8,13 @@ Blender utility scripts for various versions.
 * Copy all bone constraints from one armature to another, using bone names for matching.
 
 ### object_utilities.py
-* Synchronize two objects' custom properties
-* Remove, from an object, all vertex groups that contain only zero values (below 0.01).
+* View the difference between two objects' data (Custom properties, vertex groups, vertex colors, modifiers)
+* Synchronize two objects' custom properties (removes properties existing only in the target object)
+* Remove, from selected objects, all vertex groups that contain only zero values (below 0.01).
+* Remove all modifiers of selected objects
+* Remove location keyframes of selected objects (and its bones) for the current frame time
+* Remove rotation keyframes of selected objects (and its bones) for the current frame time
+* Remove scale keyframes of selected objects (and its bones) for the current frame time
 
 ## Scripts for Blender 2.5, in /v2.5
 
