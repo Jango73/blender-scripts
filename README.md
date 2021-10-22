@@ -11,14 +11,6 @@ Blender utility scripts for various versions.
 * Synchronize two objects' custom properties
 * Remove, from an object, all vertex groups that contain only zero values (below 0.01).
 
-## Scripts for Blender 2.6, in /v2.6
-
-### lichtwerk_MeshTransfer
-This script is copyright Philipp Oeser.
-Stored here for convenience.
-
-* Enables transfer of vertex groups from one mesh to another
-
 ## Scripts for Blender 2.5, in /v2.5
 
 ### clean_up_utilities.py
