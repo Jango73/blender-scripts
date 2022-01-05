@@ -19,8 +19,8 @@
 bl_info = {
     "name": "Object utilities",
     "author": "Jango73",
-    "version": (1, 2),
-    "blender": (2, 80, 0),
+    "version": (3, 0),
+    "blender": (3, 0, 0),
     "description": "Operations on objects",
     "category": "Object",
 }
