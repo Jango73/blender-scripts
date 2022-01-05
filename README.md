@@ -3,10 +3,6 @@ Blender utility scripts for various versions.
 
 ## Scripts for Blender 3.0, in /v3.0
 
-### armature_utilities.py
-* Refresh the constraints and properties of an armature proxy that links to another blender file. (Does not work with NLA, must fix)
-* Copy all bone constraints from one armature to another, using bone names for matching.
-
 ### object_utilities.py
 * View the difference between two objects' data (Custom properties, vertex groups, vertex colors, modifiers)
 * Copy all custom property values from one object to another (only for properties existing in both objects)
