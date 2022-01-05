@@ -307,7 +307,6 @@ def copyObjectPropertyValues(self, context):
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
-# Must finished
 
 def makeAllPropertiesOverridable(self, context):
     # get active object
@@ -317,9 +316,12 @@ def makeAllPropertiesOverridable(self, context):
         return {'CANCELLED'}
 
     for pname in object.keys():
-        p = object.id_properties_ui(pname)
-        print(pname, p)
-        # p.is_overridable_library = True
+        try:
+            qualified_name = "[\"" + pname + "\"]"
+            object.property_overridable_library_set(qualified_name, True)
+        except:
+            print("Error when processing ", pname)
+            pass
 
     return {'FINISHED'}
 
@@ -618,7 +620,7 @@ def register():
     bpy.utils.register_class(OBJECT_OT_DiffObjectData)
 #    bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.register_class(OBJECT_OT_CopyObjectPropertyValues)
-#    bpy.utils.register_class(OBJECT_OT_MakeAllPropertiesOverridable)
+    bpy.utils.register_class(OBJECT_OT_MakeAllPropertiesOverridable)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
     bpy.utils.register_class(OBJECT_OT_RemoveLocationKeyframes)
@@ -648,7 +650,7 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_DiffObjectData)
 #    bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectPropertyValues)
-#    bpy.utils.unregister_class(OBJECT_OT_MakeAllPropertiesOverridable)
+    bpy.utils.unregister_class(OBJECT_OT_MakeAllPropertiesOverridable)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
     bpy.utils.unregister_class(OBJECT_OT_RemoveLocationKeyframes)
