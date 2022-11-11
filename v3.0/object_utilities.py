@@ -19,7 +19,7 @@
 bl_info = {
     "name": "Object utilities",
     "author": "Jango73",
-    "version": (3, 0),
+    "version": (3, 2),
     "blender": (3, 0, 0),
     "description": "Operations on objects",
     "category": "Object",
@@ -53,6 +53,17 @@ def printToString(targetString, text, no_newline=False):
         targetString += (text + "\n")
 
     return targetString
+
+# -----------------------------------------------------------------------------
+
+def purgeAll(self, context):
+
+    deleted = 0
+    bpy.ops.outliner.orphans_purge(num_deleted=deleted, do_recursive=True)
+
+    showMessageBox(lines=["All orphans deleted"])
+
+    return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
 
@@ -277,6 +288,37 @@ def syncObjectProperties(self, context):
 
 # -----------------------------------------------------------------------------
 
+def copyMaterialSlots(self, context):
+    target = context.selected_objects[0]
+
+    if target is None:
+        return {'CANCELLED'}
+
+    # get active object
+    source = context.active_object
+
+    if source is None:
+        return {'CANCELLED'}
+
+    if target == source:
+        if len(context.selected_objects) < 2:
+            return {'CANCELLED'}
+        target = context.selected_objects[1]
+
+    if target is None:
+        return {'CANCELLED'}
+
+    if len(source.material_slots) > 0:
+        # Assign the material to each slot 
+        for c, slot in enumerate(source.material_slots):
+            target.material_slots[c].material = source.material_slots[c].material
+
+    self.report({'INFO'}, "Copied " + source.name + " materials to " + target.name)
+
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
 def copyObjectPropertyValues(self, context):
     target = context.selected_objects[0]
 
@@ -412,7 +454,61 @@ def cleanUpMaterialsAndImages(context):
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
+# FIX : This creates a mess with the edges of faces
+
+def rotateFaceVertexIndices(context):
+    # If in edit mode, switch to object mode and switch back at the end
+    was_in_edit_mode = False
+
+    for object in context.selected_objects:
+        if object.type == 'MESH':
+
+            if object.mode == 'EDIT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+                was_in_edit_mode = True
+
+            me = object.data
+
+            for poly in me.polygons:
+                if not poly.select:
+                    continue
+
+                # Get loops for this poly
+                # Loop = corner of a poly
+                loop_start = poly.loop_start
+                loop_end = loop_start + poly.loop_total
+                loops = [me.loops[loopi] for loopi in range(loop_start, loop_end)]
+
+                # Get vertex indices for each loop
+                vidxs = [loop.vertex_index for loop in loops]
+
+                # Shift
+                vidxs = vidxs[1:] + vidxs[0:1]
+
+                # Write back
+                for i, loop in enumerate(loops):
+                    loop.vertex_index = vidxs[i]
+
+            # Not sure if you need this
+            me.update()
+
+            if was_in_edit_mode:
+                bpy.ops.object.mode_set(mode='EDIT')
+
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
 # Operators
+
+class OBJECT_OT_PurgeAll(bpy.types.Operator):
+    """Purge all"""
+    bl_idname = "object.purge_all"
+    bl_label = "Purge all orphans"
+    bl_description = "Purges all orphan data"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return purgeAll(self, context)
 
 class OBJECT_OT_DiffObjectData(bpy.types.Operator):
     """Diff Object Data"""
@@ -443,6 +539,16 @@ class OBJECT_OT_CopyObjectPropertyValues(bpy.types.Operator):
 
     def execute(self, context):
         return copyObjectPropertyValues(self, context)
+
+class OBJECT_OT_CopyObjectMaterials(bpy.types.Operator):
+    """Copy Object Materials"""
+    bl_idname = "object.copy_object_materials"
+    bl_label = "Copy object materials"
+    bl_description = "Copies the materials of an object to another"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return copyMaterialSlots(self, context)
 
 class OBJECT_OT_MakeAllPropertiesOverridable(bpy.types.Operator):
     """Make All Properties Overridable"""
@@ -524,6 +630,16 @@ class OBJECT_OT_CleanUpMaterialsAndImages(bpy.types.Operator):
     def execute(self, context):
         return cleanUpMaterialsAndImages(context)
 
+class OBJECT_OT_RotateFaceVertexIndices(bpy.types.Operator):
+    """Rotate selected faces' vertex indices"""
+    bl_idname = "object.rotate_face_vertex_indices"
+    bl_label = "Rotates selected faces' vertex indices"
+    bl_description = "Rotates selected faces' vertex indices"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return rotateFaceVertexIndices(context)
+
 class SCENE_OT_ToggleRenderers(bpy.types.Operator):
     """Toggle Renderers"""
     bl_idname = "scene.toggle_renderers"
@@ -567,9 +683,11 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
+        box.operator("object.purge_all")
         box.operator("object.diff_object_data")
         box.operator("object.sync_object_properties")
         box.operator("object.copy_object_property_values")
+        box.operator("object.copy_object_materials")
         box.operator("object.make_all_properties_overridable")
         box.operator("object.remove_empty_vertex_groups")
         box.operator("object.remove_all_modifiers")
@@ -594,6 +712,25 @@ class OBJECT_PT_misc_utilities(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.operator("object.clean_up_materials_and_images")
+        box.operator("object.purge_all")
+
+class OBJECT_PT_object_edit_utilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_object_edit_utilities"
+    bl_label = "Object edit utilities"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Edit"
+    bl_context = 'mesh_edit'
+
+    @classmethod
+    def poll(cls, context):
+        return True
+        # (context.selected_objects is not None)
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.operator("object.rotate_face_vertex_indices")
 
 class SCENE_PT_render_utilities(bpy.types.Panel):
     bl_idname = "SCENE_PT_render_utilities"
@@ -617,9 +754,11 @@ class SCENE_PT_render_utilities(bpy.types.Panel):
 addon_keymaps = []
 
 def register():
+    bpy.utils.register_class(OBJECT_OT_PurgeAll)
     bpy.utils.register_class(OBJECT_OT_DiffObjectData)
 #    bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.register_class(OBJECT_OT_CopyObjectPropertyValues)
+    bpy.utils.register_class(OBJECT_OT_CopyObjectMaterials)
     bpy.utils.register_class(OBJECT_OT_MakeAllPropertiesOverridable)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
@@ -628,10 +767,12 @@ def register():
     bpy.utils.register_class(OBJECT_OT_RemoveQuatRotationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveScaleKeyframes)
     bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
+#    bpy.utils.register_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(SCENE_OT_PauseRender)
     bpy.utils.register_class(OBJECT_PT_object_utilities)
     bpy.utils.register_class(OBJECT_PT_misc_utilities)
+#    bpy.utils.register_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.register_class(SCENE_PT_render_utilities)
 
     # handle the keymap
@@ -647,9 +788,11 @@ def unregister():
         km.keymap_items.remove(kmi)
     addon_keymaps.clear()
 
+    bpy.utils.unregister_class(OBJECT_OT_PurgeAll)
     bpy.utils.unregister_class(OBJECT_OT_DiffObjectData)
 #    bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectPropertyValues)
+    bpy.utils.unregister_class(OBJECT_OT_CopyObjectMaterials)
     bpy.utils.unregister_class(OBJECT_OT_MakeAllPropertiesOverridable)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
@@ -658,10 +801,12 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_RemoveQuatRotationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveScaleKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
+#    bpy.utils.unregister_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(SCENE_OT_PauseRender)
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
     bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
+#    bpy.utils.unregister_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.unregister_class(SCENE_PT_render_utilities)
 
 if __name__ == "__main__":
