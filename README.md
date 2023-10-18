@@ -5,6 +5,7 @@ Blender utility scripts for various versions.
 
 ### object_utilities.py
 * View the difference between two objects' data (Custom properties, vertex groups, vertex colors, modifiers)
+* Synchronize two objects' custom properties (removes properties existing only in the target object)
 * Copy all custom property values from one object to another (only for properties existing in both objects)
 * Make all custom properties, in selected object, "library overridable"
 * Remove, from selected objects, all vertex groups that contain only zero values (below 0.01).
