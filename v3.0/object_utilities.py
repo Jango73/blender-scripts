@@ -19,7 +19,7 @@
 bl_info = {
     "name": "Object utilities",
     "author": "Jango73",
-    "version": (3, 2),
+    "version": (3, 3),
     "blender": (3, 0, 0),
     "description": "Operations on objects",
     "category": "Object",
@@ -28,6 +28,39 @@ bl_info = {
 import bpy
 import re
 import copy
+
+# -----------------------------------------------------------------------------
+# Following two functions are from "blenderartists.org/u/Gorgious" in "object_copy_custom_properties_1_08.py"
+
+def setProperty(obj, name, value, rna, is_overridable):
+    if obj is None:
+        return
+
+    obj[name] = value
+    obj.id_properties_ensure()
+    id_properties_ui = obj.id_properties_ui(name)
+    id_properties_ui.update_from(rna)
+    obj.property_overridable_library_set(f'["{name}"]', is_overridable)
+
+def getProperties(obj):
+    if obj is None:
+        return tuple()
+
+    obj.id_properties_ensure()
+
+    names = []
+    items = obj.items()
+    rna_properties = { prop.identifier for prop in obj.bl_rna.properties if prop.is_runtime }
+
+    for k, _ in items:
+        if k in rna_properties:
+            continue
+        names.append(k)
+
+    names = list(set(obj.keys()) - set(('cycles_visibility', 'cycles', '_RNA_UI', 'pov')))
+    values = [(name, obj[name], obj.id_properties_ui(name),  obj.is_property_overridable_library(f'["{name}"]')) for name in names]
+
+    return values
 
 # -----------------------------------------------------------------------------
 
@@ -255,18 +288,12 @@ def getMirroredName(name):
     return ''
 
 # -----------------------------------------------------------------------------
-# Must update to 3.0 (not trivial to me)
 
 def syncObjectProperties(self, context):
     target = context.selected_objects[0]
-
-    if target is None:
-        return {'CANCELLED'}
-
-    # get active object
     source = context.active_object
 
-    if source is None:
+    if source is None or target is None:
         return {'CANCELLED'}
 
     if target == source:
@@ -277,10 +304,11 @@ def syncObjectProperties(self, context):
     if target is None:
         return {'CANCELLED'}
 
-    for p in source.keys():
-        if not p.startswith("_"):
-            if p not in target.keys():
-                target[p] = source.get(p)
+    values = getProperties(source)
+
+    for value in values:
+        if value[0] not in target.keys():
+            setProperty(target, value[0], value[1], value[2], value[3])
 
     self.report({'INFO'}, "Synced " + target.name + " properties with " + source.name)
 
@@ -290,14 +318,9 @@ def syncObjectProperties(self, context):
 
 def copyMaterialSlots(self, context):
     target = context.selected_objects[0]
-
-    if target is None:
-        return {'CANCELLED'}
-
-    # get active object
     source = context.active_object
 
-    if source is None:
+    if source is None or target is None:
         return {'CANCELLED'}
 
     if target == source:
@@ -712,6 +735,7 @@ class OBJECT_PT_misc_utilities(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.operator("object.clean_up_materials_and_images")
+        box = layout.box()
         box.operator("object.purge_all")
 
 class OBJECT_PT_object_edit_utilities(bpy.types.Panel):
@@ -756,7 +780,7 @@ addon_keymaps = []
 def register():
     bpy.utils.register_class(OBJECT_OT_PurgeAll)
     bpy.utils.register_class(OBJECT_OT_DiffObjectData)
-#    bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
+    bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.register_class(OBJECT_OT_CopyObjectPropertyValues)
     bpy.utils.register_class(OBJECT_OT_CopyObjectMaterials)
     bpy.utils.register_class(OBJECT_OT_MakeAllPropertiesOverridable)
@@ -790,7 +814,7 @@ def unregister():
 
     bpy.utils.unregister_class(OBJECT_OT_PurgeAll)
     bpy.utils.unregister_class(OBJECT_OT_DiffObjectData)
-#    bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
+    bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectPropertyValues)
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectMaterials)
     bpy.utils.unregister_class(OBJECT_OT_MakeAllPropertiesOverridable)
