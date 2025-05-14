@@ -26,8 +26,11 @@ bl_info = {
 }
 
 import bpy
+import mathutils
+from bpy.types import Operator
+from bpy.props import StringProperty
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 
 def copyArmatureConstraints(self, context):
     target = context.selected_objects[0]
@@ -77,7 +80,7 @@ def copyArmatureConstraints(self, context):
 
     return {'FINISHED'}
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # Operators
 
 class OBJECT_OT_CopyArmatureConstraints(bpy.types.Operator):
@@ -90,7 +93,122 @@ class OBJECT_OT_CopyArmatureConstraints(bpy.types.Operator):
     def execute(self, context):
         return copyArmatureConstraints(self, context)
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# Save start pose and delta pose
+start_pose = {}
+pose_delta = {}
+
+# -------------------------------------------------------------------------------------------------
+
+class POSE_OT_MarkStartPose(Operator):
+    bl_idname = "pose.mark_start_pose"
+    bl_label = "Mark Start Pose"
+    bl_description = "Mark the current pose as the start pose"
+    
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'ARMATURE'
+    
+    def execute(self, context):
+        global start_pose
+        armature = context.active_object
+        pose_bones = armature.pose.bones
+        
+        # Clear previous start pose
+        start_pose.clear()
+        
+        # Store current pose (rotation, location, scale)
+        for bone in pose_bones:
+            start_pose[bone.name] = {
+                'rotation': bone.rotation_quaternion.copy() if bone.rotation_mode == 'QUATERNION' else bone.rotation_euler.to_quaternion(),
+                'location': bone.location.copy(),
+                'scale': bone.scale.copy()
+            }
+        
+        self.report({'INFO'}, "Marked current pose as start pose")
+        return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
+
+class POSE_OT_CopyDelta(Operator):
+    bl_idname = "pose.copy_delta"
+    bl_label = "Copy Pose Delta"
+    bl_description = "Copy the delta between marked start pose and current pose"
+    
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'ARMATURE' and start_pose
+    
+    def execute(self, context):
+        global pose_delta
+        armature = context.active_object
+        pose_bones = armature.pose.bones
+        
+        # Clear previous delta
+        pose_delta.clear()
+        
+        # Calculate delta for each bone
+        for bone in pose_bones:
+            if bone.name in start_pose:
+                # Get start and end (current) pose
+                start_data = start_pose[bone.name]
+                end_rot = bone.rotation_quaternion.copy() if bone.rotation_mode == 'QUATERNION' else bone.rotation_euler.to_quaternion()
+                end_loc = bone.location.copy()
+                end_scale = bone.scale.copy()
+                
+                # Calculate delta
+                delta_rot = end_rot @ start_data['rotation'].inverted()
+                delta_loc = end_loc - start_data['location']
+                delta_scale = mathutils.Vector([end_scale[i] / start_data['scale'][i] if start_data['scale'][i] != 0 else 1.0 for i in range(3)])
+                
+                pose_delta[bone.name] = {
+                    'rotation': delta_rot,
+                    'location': delta_loc,
+                    'scale': delta_scale
+                }
+        
+        self.report({'INFO'}, "Copied delta from start pose to current pose")
+        return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
+
+class POSE_OT_PasteDelta(Operator):
+    bl_idname = "pose.paste_delta"
+    bl_label = "Paste Pose Delta"
+    bl_description = "Apply the copied pose delta to the current pose"
+    
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'ARMATURE' and pose_delta
+    
+    def execute(self, context):
+        armature = context.active_object
+        pose_bones = armature.pose.bones
+        
+        # Apply delta to each bone
+        for bone in pose_bones:
+            if bone.name in pose_delta:
+                delta_data = pose_delta[bone.name]
+                
+                # Apply rotation
+                current_rot = bone.rotation_quaternion.copy() if bone.rotation_mode == 'QUATERNION' else bone.rotation_euler.to_quaternion()
+                new_rot = delta_data['rotation'] @ current_rot
+                if bone.rotation_mode == 'QUATERNION':
+                    bone.rotation_quaternion = new_rot
+                else:
+                    bone.rotation_euler = new_rot.to_euler(bone.rotation_mode)
+                
+                # Apply location
+                bone.location += delta_data['location']
+                
+                # Apply scale
+                for i in range(3):
+                    bone.scale[i] *= delta_data['scale'][i]
+        
+        self.report({'INFO'}, "Pasted pose delta")
+        return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
 # Panels
 
 class OBJECT_PT_armature_utilities(bpy.types.Panel):
@@ -110,16 +228,42 @@ class OBJECT_PT_armature_utilities(bpy.types.Panel):
 
         layout.operator("object.copy_armature_constraints")
 
-# -----------------------------------------------------------------------------
+class OBJECT_PT_bone_utilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_bone_utilities"
+    bl_label = "Bone Utilities"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Edit"
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'POSE'
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.operator(POSE_OT_MarkStartPose.bl_idname)
+        box.operator(POSE_OT_CopyDelta.bl_idname)
+        box.operator(POSE_OT_PasteDelta.bl_idname)
+
+# -------------------------------------------------------------------------------------------------
 # Registering
 
 def register():
     bpy.utils.register_class(OBJECT_OT_CopyArmatureConstraints)
     bpy.utils.register_class(OBJECT_PT_armature_utilities)
+    bpy.utils.register_class(OBJECT_PT_bone_utilities)
+    bpy.utils.register_class(POSE_OT_MarkStartPose)
+    bpy.utils.register_class(POSE_OT_CopyDelta)
+    bpy.utils.register_class(POSE_OT_PasteDelta)
 
 def unregister():
     bpy.utils.unregister_class(OBJECT_OT_CopyArmatureConstraints)
     bpy.utils.unregister_class(OBJECT_PT_armature_utilities)
+    bpy.utils.unregister_class(OBJECT_PT_bone_utilities)
+    bpy.utils.unregister_class(POSE_OT_MarkStartPose)
+    bpy.utils.unregister_class(POSE_OT_CopyDelta)
+    bpy.utils.unregister_class(POSE_OT_PasteDelta)
 
 if __name__ == "__main__":
     register()

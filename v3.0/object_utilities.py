@@ -284,6 +284,18 @@ def getMirroredName(name):
 
     if name.startswith('right'):
         return name.replace('right', 'left')
+
+    if '.L' in name:
+        return name.replace('.L','.R')
+
+    if '.l' in name:
+        return name.replace('.l','.r')
+
+    if name.startswith('Left'):
+        return name.replace('Left', 'Right')
+
+    if name.startswith('left'):
+        return name.replace('left', 'right')
     
     return ''
 
@@ -375,15 +387,15 @@ def copyObjectPropertyValues(self, context):
 
 def makeAllPropertiesOverridable(self, context):
     # get active object
-    object = context.active_object
+    obj = context.active_object
 
-    if object is None:
+    if obj is None:
         return {'CANCELLED'}
 
-    for pname in object.keys():
+    for pname in obj.keys():
         try:
             qualified_name = "[\"" + pname + "\"]"
-            object.property_overridable_library_set(qualified_name, True)
+            obj.property_overridable_library_set(qualified_name, True)
         except:
             print("Error when processing ", pname)
             pass
@@ -393,15 +405,15 @@ def makeAllPropertiesOverridable(self, context):
 # -----------------------------------------------------------------------------
 
 def removeEmptyVertexGroups(self, context):
-    for object in context.selected_objects:
+    for obj in context.selected_objects:
 
-        object.update_from_editmode()
+        obj.update_from_editmode()
 
-        vgroup_used = {i: False for i, k in enumerate(object.vertex_groups)}
-        vgroup_names = {i: k.name for i, k in enumerate(object.vertex_groups)}
+        vgroup_used = {i: False for i, k in enumerate(obj.vertex_groups)}
+        vgroup_names = {i: k.name for i, k in enumerate(obj.vertex_groups)}
         vgroup_name_list = list(vgroup_names.values())
 
-        for v in object.data.vertices:
+        for v in obj.data.vertices:
             for g in v.groups:
 
                 mirrored_name = getMirroredName(vgroup_names[g.group])
@@ -414,40 +426,72 @@ def removeEmptyVertexGroups(self, context):
 
         for i, used in sorted(vgroup_used.items(), reverse=True):
             if not used:
-                object.vertex_groups.remove(object.vertex_groups[i])
+                obj.vertex_groups.remove(obj.vertex_groups[i])
 
-        self.report({'INFO'}, "Removed empty groups from " + object.name)
+        self.report({'INFO'}, "Removed empty groups from " + obj.name)
 
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
 
 def removeAllModifiers(self, context):
-    for object in context.selected_objects:
+    for obj in context.selected_objects:
 
         # remove all modifiers
-        object.modifiers.clear()
+        obj.modifiers.clear()
 
-        self.report({'INFO'}, "Removed all modifiers from " + object.name)
+        self.report({'INFO'}, "Removed all modifiers from " + obj.name)
+
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
+def copyObjectLocation(self, context):
+    obj = context.active_object
+
+    if obj is None:
+        self.report({'ERROR'}, "No active object.")
+        return {'CANCELLED'}
+
+    context.window_manager["_copied_location"] = obj.location[:]
+    self.report({'INFO'}, f"Copied location: {obj.location[:]}")
+
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
+def pasteObjectLocation(self, context):
+    obj = context.active_object
+
+    if obj is None:
+        self.report({'ERROR'}, "No active object.")
+        return {'CANCELLED'}
+
+    if "_copied_location" not in context.window_manager:
+        self.report({'WARNING'}, "No location stored. Use 'Copy' first.")
+        return {'CANCELLED'}
+
+    obj.location = context.window_manager["_copied_location"]
+    self.report({'INFO'}, f"Pasted location: {obj.location[:]}")
 
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
 
 def removeKeyframesByChannel(self, context, channel):
-    for object in context.selected_objects:
+    for obj in context.selected_objects:
 
-        if object.animation_data:
-            action = object.animation_data.action
+        if obj.animation_data:
+            action = obj.animation_data.action
             if action:
                 for fc in action.fcurves:
                     if fc.data_path.endswith(channel):
                         try:
-                            object.keyframe_delete(fc.data_path)
+                            obj.keyframe_delete(fc.data_path)
                         except TypeError:
                             print(fc.data_path + " channel does not exist. Ignoring.")
 
-        self.report({'INFO'}, "Removed " + channel + " type keyframes from " + object.name)
+        self.report({'INFO'}, "Removed " + channel + " type keyframes from " + obj.name)
 
     return {'FINISHED'}
 
@@ -483,14 +527,14 @@ def rotateFaceVertexIndices(context):
     # If in edit mode, switch to object mode and switch back at the end
     was_in_edit_mode = False
 
-    for object in context.selected_objects:
-        if object.type == 'MESH':
+    for obj in context.selected_objects:
+        if obj.type == 'MESH':
 
-            if object.mode == 'EDIT':
+            if obj.mode == 'EDIT':
                 bpy.ops.object.mode_set(mode='OBJECT')
                 was_in_edit_mode = True
 
-            me = object.data
+            me = obj.data
 
             for poly in me.polygons:
                 if not poly.select:
@@ -532,6 +576,36 @@ class OBJECT_OT_PurgeAll(bpy.types.Operator):
 
     def execute(self, context):
         return purgeAll(self, context)
+
+class OBJECT_OT_HideAllParticles(bpy.types.Operator):
+    """Hide all particles"""
+    bl_idname = "object.hide_all_particles"
+    bl_label = "Hide all particles"
+    bl_description = "Hide all particles"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        for object in bpy.data.objects:
+            if bpy.context.scene in object.users_scene:
+                for modifier in object.modifiers:
+                    if modifier.type == 'PARTICLE_SYSTEM':
+                        modifier.show_viewport = False
+        return {'FINISHED'}
+
+class OBJECT_OT_ShowAllParticles(bpy.types.Operator):
+    """Show all particles"""
+    bl_idname = "object.show_all_particles"
+    bl_label = "Show all particles"
+    bl_description = "Show all particles"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        for object in bpy.data.objects:
+            if bpy.context.scene in object.users_scene:
+                for modifier in object.modifiers:
+                    if modifier.type == 'PARTICLE_SYSTEM':
+                        modifier.show_viewport = True
+        return {'FINISHED'}
 
 class OBJECT_OT_DiffObjectData(bpy.types.Operator):
     """Diff Object Data"""
@@ -602,6 +676,26 @@ class OBJECT_OT_RemoveAllModifiers(bpy.types.Operator):
 
     def execute(self, context):
         return removeAllModifiers(self, context)
+
+class OBJECT_OT_CopyObjectLocation(bpy.types.Operator):
+    """CopyObjectLocation"""
+    bl_idname = "object.copy_object_location"
+    bl_label = "Copy object location"
+    bl_description = "Copies the active object's location to memory"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return copyObjectLocation(self, context)
+
+class OBJECT_OT_PasteObjectLocation(bpy.types.Operator):
+    """PasteObjectLocation"""
+    bl_idname = "object.paste_object_location"
+    bl_label = "Paste object location"
+    bl_description = "Pastes the active object's location from memory"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return pasteObjectLocation(self, context)
 
 class OBJECT_OT_RemoveLocationKeyframes(bpy.types.Operator):
     """RemoveLocationKeyframes"""
@@ -707,6 +801,9 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         layout = self.layout
         box = layout.box()
         box.operator("object.purge_all")
+        box.operator("object.hide_all_particles")
+        box.operator("object.show_all_particles")
+        box = layout.box()
         box.operator("object.diff_object_data")
         box.operator("object.sync_object_properties")
         box.operator("object.copy_object_property_values")
@@ -714,6 +811,9 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.make_all_properties_overridable")
         box.operator("object.remove_empty_vertex_groups")
         box.operator("object.remove_all_modifiers")
+        box = layout.box()
+        box.operator("object.copy_object_location")
+        box.operator("object.paste_object_location")
         box = layout.box()
         box.operator("object.remove_location_keyframes")
         box.operator("object.remove_euler_rotation_keyframes")
@@ -735,8 +835,6 @@ class OBJECT_PT_misc_utilities(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.operator("object.clean_up_materials_and_images")
-        box = layout.box()
-        box.operator("object.purge_all")
 
 class OBJECT_PT_object_edit_utilities(bpy.types.Panel):
     bl_idname = "OBJECT_PT_object_edit_utilities"
@@ -779,6 +877,8 @@ addon_keymaps = []
 
 def register():
     bpy.utils.register_class(OBJECT_OT_PurgeAll)
+    bpy.utils.register_class(OBJECT_OT_HideAllParticles)
+    bpy.utils.register_class(OBJECT_OT_ShowAllParticles)
     bpy.utils.register_class(OBJECT_OT_DiffObjectData)
     bpy.utils.register_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.register_class(OBJECT_OT_CopyObjectPropertyValues)
@@ -786,14 +886,19 @@ def register():
     bpy.utils.register_class(OBJECT_OT_MakeAllPropertiesOverridable)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
+
+    bpy.utils.register_class(OBJECT_OT_CopyObjectLocation)
+    bpy.utils.register_class(OBJECT_OT_PasteObjectLocation)
     bpy.utils.register_class(OBJECT_OT_RemoveLocationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveEulerRotationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveQuatRotationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveScaleKeyframes)
+
     bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
 #    bpy.utils.register_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(SCENE_OT_PauseRender)
+
     bpy.utils.register_class(OBJECT_PT_object_utilities)
     bpy.utils.register_class(OBJECT_PT_misc_utilities)
 #    bpy.utils.register_class(OBJECT_PT_object_edit_utilities)
@@ -813,6 +918,8 @@ def unregister():
     addon_keymaps.clear()
 
     bpy.utils.unregister_class(OBJECT_OT_PurgeAll)
+    bpy.utils.unregister_class(OBJECT_OT_HideAllParticles)
+    bpy.utils.unregister_class(OBJECT_OT_ShowAllParticles)
     bpy.utils.unregister_class(OBJECT_OT_DiffObjectData)
     bpy.utils.unregister_class(OBJECT_OT_SyncObjectProperties)
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectPropertyValues)
@@ -820,14 +927,19 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_MakeAllPropertiesOverridable)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
+
+    bpy.utils.unregister_class(OBJECT_OT_CopyObjectLocation)
+    bpy.utils.unregister_class(OBJECT_OT_PasteObjectLocation)
     bpy.utils.unregister_class(OBJECT_OT_RemoveLocationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEulerRotationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveQuatRotationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveScaleKeyframes)
+
     bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
 #    bpy.utils.unregister_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(SCENE_OT_PauseRender)
+
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
     bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
 #    bpy.utils.unregister_class(OBJECT_PT_object_edit_utilities)
