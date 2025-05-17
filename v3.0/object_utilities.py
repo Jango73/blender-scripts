@@ -29,6 +29,10 @@ import bpy
 import re
 import copy
 
+# -------------------------------------------------------------------
+# Global storage for transform copy/paste
+_copied_transform = None
+
 # -----------------------------------------------------------------------------
 # Following two functions are from "blenderartists.org/u/Gorgious" in "object_copy_custom_properties_1_08.py"
 
@@ -446,34 +450,42 @@ def removeAllModifiers(self, context):
 
 # -----------------------------------------------------------------------------
 
-def copyObjectLocation(self, context):
+def copyObjectTransform(self, context):
+    global _copied_transform
     obj = context.active_object
 
     if obj is None:
         self.report({'ERROR'}, "No active object.")
         return {'CANCELLED'}
 
-    context.window_manager["_copied_location"] = obj.location[:]
-    self.report({'INFO'}, f"Copied location: {obj.location[:]}")
+    _copied_transform = {
+        "location": obj.location[:],
+        "rotation": obj.rotation_euler[:],
+        "scale": obj.scale[:]
+    }
 
+    self.report({'INFO'}, f"Copied transform: {obj.location[:]}")
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
 
-def pasteObjectLocation(self, context):
+def pasteObjectTransform(self, context):
+    global _copied_transform
     obj = context.active_object
 
     if obj is None:
         self.report({'ERROR'}, "No active object.")
         return {'CANCELLED'}
 
-    if "_copied_location" not in context.window_manager:
-        self.report({'WARNING'}, "No location stored. Use 'Copy' first.")
+    if _copied_transform is None:
+        self.report({'WARNING'}, "No transform stored. Use 'Copy' first.")
         return {'CANCELLED'}
 
-    obj.location = context.window_manager["_copied_location"]
-    self.report({'INFO'}, f"Pasted location: {obj.location[:]}")
+    obj.location = _copied_transform["location"]
+    obj.rotation_euler = _copied_transform["rotation"]
+    obj.scale = _copied_transform["scale"]
 
+    self.report({'INFO'}, f"Pasted transform: {obj.location[:]}")
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
@@ -677,25 +689,25 @@ class OBJECT_OT_RemoveAllModifiers(bpy.types.Operator):
     def execute(self, context):
         return removeAllModifiers(self, context)
 
-class OBJECT_OT_CopyObjectLocation(bpy.types.Operator):
-    """CopyObjectLocation"""
-    bl_idname = "object.copy_object_location"
-    bl_label = "Copy object location"
-    bl_description = "Copies the active object's location to memory"
+class OBJECT_OT_CopyObjectTransform(bpy.types.Operator):
+    """Copy Object Transform"""
+    bl_idname = "object.copy_object_transform"
+    bl_label = "Copy object transform"
+    bl_description = "Copies the active object's location, rotation and scale to memory"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        return copyObjectLocation(self, context)
+        return copyObjectTransform(self, context)
 
-class OBJECT_OT_PasteObjectLocation(bpy.types.Operator):
-    """PasteObjectLocation"""
-    bl_idname = "object.paste_object_location"
-    bl_label = "Paste object location"
-    bl_description = "Pastes the active object's location from memory"
+class OBJECT_OT_PasteObjectTransform(bpy.types.Operator):
+    """Paste Object Transform"""
+    bl_idname = "object.paste_object_transform"
+    bl_label = "Paste object transform"
+    bl_description = "Pastes location, rotation and scale to the active object from memory"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        return pasteObjectLocation(self, context)
+        return pasteObjectTransform(self, context)
 
 class OBJECT_OT_RemoveLocationKeyframes(bpy.types.Operator):
     """RemoveLocationKeyframes"""
@@ -799,10 +811,12 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+
         box = layout.box()
         box.operator("object.purge_all")
         box.operator("object.hide_all_particles")
         box.operator("object.show_all_particles")
+
         box = layout.box()
         box.operator("object.diff_object_data")
         box.operator("object.sync_object_properties")
@@ -811,9 +825,11 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.make_all_properties_overridable")
         box.operator("object.remove_empty_vertex_groups")
         box.operator("object.remove_all_modifiers")
+
         box = layout.box()
-        box.operator("object.copy_object_location")
-        box.operator("object.paste_object_location")
+        box.operator("object.copy_object_transform")
+        box.operator("object.paste_object_transform")
+
         box = layout.box()
         box.operator("object.remove_location_keyframes")
         box.operator("object.remove_euler_rotation_keyframes")
@@ -887,8 +903,8 @@ def register():
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
 
-    bpy.utils.register_class(OBJECT_OT_CopyObjectLocation)
-    bpy.utils.register_class(OBJECT_OT_PasteObjectLocation)
+    bpy.utils.register_class(OBJECT_OT_CopyObjectTransform)
+    bpy.utils.register_class(OBJECT_OT_PasteObjectTransform)
     bpy.utils.register_class(OBJECT_OT_RemoveLocationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveEulerRotationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveQuatRotationKeyframes)
@@ -928,8 +944,8 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
 
-    bpy.utils.unregister_class(OBJECT_OT_CopyObjectLocation)
-    bpy.utils.unregister_class(OBJECT_OT_PasteObjectLocation)
+    bpy.utils.unregister_class(OBJECT_OT_CopyObjectTransform)
+    bpy.utils.unregister_class(OBJECT_OT_PasteObjectTransform)
     bpy.utils.unregister_class(OBJECT_OT_RemoveLocationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEulerRotationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveQuatRotationKeyframes)
