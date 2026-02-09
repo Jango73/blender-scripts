@@ -450,6 +450,19 @@ def removeAllModifiers(self, context):
 
 # -----------------------------------------------------------------------------
 
+def toggleShadowCatcher(self, context):
+    toggled_count = 0
+
+    for obj in context.selected_objects:
+        if hasattr(obj, "is_shadow_catcher"):
+            obj.is_shadow_catcher = not obj.is_shadow_catcher
+            toggled_count += 1
+
+    self.report({'INFO'}, "Toggled shadow catcher on " + str(toggled_count) + " selected object(s)")
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
 def copyObjectTransform(self, context):
     global _copied_transform
     obj = context.active_object
@@ -689,6 +702,16 @@ class OBJECT_OT_RemoveAllModifiers(bpy.types.Operator):
     def execute(self, context):
         return removeAllModifiers(self, context)
 
+class OBJECT_OT_ToggleShadowCatcher(bpy.types.Operator):
+    """Toggle Shadow Catcher"""
+    bl_idname = "object.toggle_shadow_catcher"
+    bl_label = "Toggle shadow catcher"
+    bl_description = "Toggles Shadow Catcher on all selected objects"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return toggleShadowCatcher(self, context)
+
 class OBJECT_OT_CopyObjectTransform(bpy.types.Operator):
     """Copy Object Transform"""
     bl_idname = "object.copy_object_transform"
@@ -823,6 +846,7 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.copy_object_property_values")
         box.operator("object.copy_object_materials")
         box.operator("object.make_all_properties_overridable")
+        box.operator("object.toggle_shadow_catcher")
         box.operator("object.remove_empty_vertex_groups")
         box.operator("object.remove_all_modifiers")
 
@@ -900,6 +924,7 @@ def register():
     bpy.utils.register_class(OBJECT_OT_CopyObjectPropertyValues)
     bpy.utils.register_class(OBJECT_OT_CopyObjectMaterials)
     bpy.utils.register_class(OBJECT_OT_MakeAllPropertiesOverridable)
+    bpy.utils.register_class(OBJECT_OT_ToggleShadowCatcher)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
 
@@ -941,6 +966,7 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectPropertyValues)
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectMaterials)
     bpy.utils.unregister_class(OBJECT_OT_MakeAllPropertiesOverridable)
+    bpy.utils.unregister_class(OBJECT_OT_ToggleShadowCatcher)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
 
