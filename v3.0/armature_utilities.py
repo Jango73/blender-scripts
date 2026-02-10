@@ -98,6 +98,7 @@ class OBJECT_OT_CopyArmatureConstraints(bpy.types.Operator):
 start_pose = {}
 pose_delta = {}
 copied_bone_transforms = {}
+copied_bone_animation = {}
 
 # -------------------------------------------------------------------------------------------------
 
@@ -134,6 +135,82 @@ def copyBonePositionsRotations(self, context):
         }
 
     self.report({'INFO'}, "Copied pose transforms for " + str(len(copied_bone_transforms)) + " bone(s)")
+    return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
+
+def setSceneFrame(scene, frame):
+    frame_int = int(frame)
+    subframe = frame - frame_int
+    scene.frame_set(frame_int, subframe=subframe)
+
+# -------------------------------------------------------------------------------------------------
+
+def clearArmatureActionKeys(armature):
+    if armature.animation_data is None or armature.animation_data.action is None:
+        return 0
+
+    action = armature.animation_data.action
+    fcurves = list(action.fcurves)
+
+    for fcurve in fcurves:
+        action.fcurves.remove(fcurve)
+
+    return len(fcurves)
+
+# -------------------------------------------------------------------------------------------------
+
+def copyBoneAnimationAllFrames(self, context):
+    global copied_bone_animation
+
+    armature = getSelectedArmature(context)
+    if armature is None:
+        self.report({'WARNING'}, "No selected armature")
+        return {'CANCELLED'}
+
+    if armature.animation_data is None or armature.animation_data.action is None:
+        self.report({'WARNING'}, "Selected armature has no action")
+        return {'CANCELLED'}
+
+    action = armature.animation_data.action
+    frames = set()
+
+    for fcurve in action.fcurves:
+        if fcurve.data_path.startswith('pose.bones["'):
+            for key in fcurve.keyframe_points:
+                frames.add(float(key.co.x))
+
+    if not frames:
+        self.report({'WARNING'}, "No keyed pose frames found")
+        return {'CANCELLED'}
+
+    scene = context.scene
+    original_frame = scene.frame_current
+    original_subframe = scene.frame_subframe
+    sorted_frames = sorted(frames)
+
+    copied_bone_animation = {"frames": sorted_frames, "bones_by_frame": {}}
+
+    try:
+        for frame in sorted_frames:
+            setSceneFrame(scene, frame)
+            frame_data = {}
+
+            for bone in armature.pose.bones:
+                frame_data[bone.name] = {
+                    "location": bone.location.copy(),
+                    "rotation_mode": bone.rotation_mode,
+                    "rotation_quaternion": bone.rotation_quaternion.copy(),
+                    "rotation_euler": bone.rotation_euler.copy(),
+                    "rotation_axis_angle": tuple(bone.rotation_axis_angle),
+                    "scale": bone.scale.copy(),
+                }
+
+            copied_bone_animation["bones_by_frame"][frame] = frame_data
+    finally:
+        scene.frame_set(original_frame, subframe=original_subframe)
+
+    self.report({'INFO'}, "Copied " + str(len(sorted_frames)) + " keyed frame(s) with loc/rot/scale")
     return {'FINISHED'}
 
 # -------------------------------------------------------------------------------------------------
@@ -185,6 +262,68 @@ def pasteBonePositionsRotations(self, context):
         self.report({'INFO'}, "Pasted pose transforms on " + str(pasted_count) + " bone(s), inserted keys on " + str(inserted_keys_count) + " bone(s)")
     else:
         self.report({'INFO'}, "Pasted pose transforms on " + str(pasted_count) + " bone(s)")
+    return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
+
+def pasteBoneAnimationAllFrames(self, context):
+    armature = getSelectedArmature(context)
+    if armature is None:
+        self.report({'WARNING'}, "No selected armature")
+        return {'CANCELLED'}
+
+    if not copied_bone_animation or "frames" not in copied_bone_animation:
+        self.report({'WARNING'}, "No copied keyed animation")
+        return {'CANCELLED'}
+
+    armature.animation_data_create()
+    if armature.animation_data.action is None:
+        armature.animation_data.action = bpy.data.actions.new(name=armature.name + "_PosePaste")
+
+    removed_curves = clearArmatureActionKeys(armature)
+
+    scene = context.scene
+    original_frame = scene.frame_current
+    original_subframe = scene.frame_subframe
+
+    frame_count = 0
+    keyed_bone_count = 0
+
+    try:
+        for frame in copied_bone_animation["frames"]:
+            setSceneFrame(scene, frame)
+            frame_data = copied_bone_animation["bones_by_frame"].get(frame, {})
+
+            for bone_name, data in frame_data.items():
+                bone = armature.pose.bones.get(bone_name)
+                if bone is None:
+                    continue
+
+                bone.location = data["location"]
+                bone.scale = data["scale"]
+                bone.rotation_mode = data["rotation_mode"]
+
+                bone.keyframe_insert(data_path="location")
+                bone.keyframe_insert(data_path="scale")
+
+                if bone.rotation_mode == 'QUATERNION':
+                    bone.rotation_quaternion = data["rotation_quaternion"]
+                    bone.keyframe_insert(data_path="rotation_quaternion")
+                elif bone.rotation_mode == 'AXIS_ANGLE':
+                    bone.rotation_axis_angle = data["rotation_axis_angle"]
+                    bone.keyframe_insert(data_path="rotation_axis_angle")
+                else:
+                    bone.rotation_euler = data["rotation_euler"]
+                    bone.keyframe_insert(data_path="rotation_euler")
+
+                keyed_bone_count += 1
+
+            frame_count += 1
+    finally:
+        scene.frame_set(original_frame, subframe=original_subframe)
+
+    context.view_layer.update()
+    self.report({'INFO'}, "Cleared " + str(removed_curves) + " FCurves, pasted " + str(frame_count) + " frame(s), keyed " + str(keyed_bone_count) + " bone pose(s)")
     return {'FINISHED'}
 
 # -------------------------------------------------------------------------------------------------
@@ -318,6 +457,8 @@ class OBJECT_PT_armature_utilities(bpy.types.Panel):
         layout.operator("object.copy_armature_constraints")
         layout.operator("object.copy_bone_positions_rotations")
         layout.operator("object.paste_bone_positions_rotations")
+        layout.operator("object.copy_bone_animation_all_frames")
+        layout.operator("object.paste_bone_animation_all_frames")
 
 class OBJECT_OT_CopyBonePositionsRotations(bpy.types.Operator):
     """Copy Bone Positions/Rotations"""
@@ -347,6 +488,34 @@ class OBJECT_OT_PasteBonePositionsRotations(bpy.types.Operator):
     def execute(self, context):
         return pasteBonePositionsRotations(self, context)
 
+class OBJECT_OT_CopyBoneAnimationAllFrames(bpy.types.Operator):
+    """Copy Bone Animation All Frames"""
+    bl_idname = "object.copy_bone_animation_all_frames"
+    bl_label = "Copy animation"
+    bl_description = "Copies location, rotation and scale for all keyed frames of selected armature"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        return copyBoneAnimationAllFrames(self, context)
+
+class OBJECT_OT_PasteBoneAnimationAllFrames(bpy.types.Operator):
+    """Paste Bone Animation All Frames"""
+    bl_idname = "object.paste_bone_animation_all_frames"
+    bl_label = "Paste animation"
+    bl_description = "Clears target keys, then pastes copied location, rotation and scale on all copied keyed frames"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        return pasteBoneAnimationAllFrames(self, context)
+
 class OBJECT_PT_bone_utilities(bpy.types.Panel):
     bl_idname = "OBJECT_PT_bone_utilities"
     bl_label = "Bone Utilities"
@@ -372,6 +541,8 @@ def register():
     bpy.utils.register_class(OBJECT_OT_CopyArmatureConstraints)
     bpy.utils.register_class(OBJECT_OT_CopyBonePositionsRotations)
     bpy.utils.register_class(OBJECT_OT_PasteBonePositionsRotations)
+    bpy.utils.register_class(OBJECT_OT_CopyBoneAnimationAllFrames)
+    bpy.utils.register_class(OBJECT_OT_PasteBoneAnimationAllFrames)
     bpy.utils.register_class(OBJECT_PT_armature_utilities)
     bpy.utils.register_class(OBJECT_PT_bone_utilities)
     bpy.utils.register_class(POSE_OT_MarkStartPose)
@@ -382,6 +553,8 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_CopyArmatureConstraints)
     bpy.utils.unregister_class(OBJECT_OT_CopyBonePositionsRotations)
     bpy.utils.unregister_class(OBJECT_OT_PasteBonePositionsRotations)
+    bpy.utils.unregister_class(OBJECT_OT_CopyBoneAnimationAllFrames)
+    bpy.utils.unregister_class(OBJECT_OT_PasteBoneAnimationAllFrames)
     bpy.utils.unregister_class(OBJECT_PT_armature_utilities)
     bpy.utils.unregister_class(OBJECT_PT_bone_utilities)
     bpy.utils.unregister_class(POSE_OT_MarkStartPose)
