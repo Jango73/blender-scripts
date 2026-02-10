@@ -328,6 +328,101 @@ def pasteBoneAnimationAllFrames(self, context):
 
 # -------------------------------------------------------------------------------------------------
 
+def deleteAllScaleKeysFromSelectedBones(self, context):
+    armature = context.active_object
+    if armature is None or armature.type != 'ARMATURE':
+        self.report({'WARNING'}, "No active armature")
+        return {'CANCELLED'}
+
+    selected_bones = context.selected_pose_bones or []
+    if not selected_bones:
+        self.report({'WARNING'}, "No selected bones")
+        return {'CANCELLED'}
+
+    if armature.animation_data is None or armature.animation_data.action is None:
+        self.report({'WARNING'}, "Active armature has no action")
+        return {'CANCELLED'}
+
+    action = armature.animation_data.action
+    target_paths = {f'pose.bones["{bone.name}"].scale' for bone in selected_bones}
+
+    removed_curves = 0
+    removed_keys = 0
+
+    for fcurve in list(action.fcurves):
+        if fcurve.data_path in target_paths:
+            removed_keys += len(fcurve.keyframe_points)
+            action.fcurves.remove(fcurve)
+            removed_curves += 1
+
+    self.report({'INFO'}, "Deleted " + str(removed_keys) + " scale key(s) from " + str(len(selected_bones)) + " selected bone(s)")
+    return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
+
+def deleteAllLocationKeysFromSelectedBones(self, context):
+    armature = context.active_object
+    if armature is None or armature.type != 'ARMATURE':
+        self.report({'WARNING'}, "No active armature")
+        return {'CANCELLED'}
+
+    selected_bones = context.selected_pose_bones or []
+    if not selected_bones:
+        self.report({'WARNING'}, "No selected bones")
+        return {'CANCELLED'}
+
+    if armature.animation_data is None or armature.animation_data.action is None:
+        self.report({'WARNING'}, "Active armature has no action")
+        return {'CANCELLED'}
+
+    action = armature.animation_data.action
+    target_paths = {f'pose.bones["{bone.name}"].location' for bone in selected_bones}
+
+    removed_keys = 0
+    for fcurve in list(action.fcurves):
+        if fcurve.data_path in target_paths:
+            removed_keys += len(fcurve.keyframe_points)
+            action.fcurves.remove(fcurve)
+
+    self.report({'INFO'}, "Deleted " + str(removed_keys) + " location key(s) from " + str(len(selected_bones)) + " selected bone(s)")
+    return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
+
+def deleteAllRotationKeysFromSelectedBones(self, context):
+    armature = context.active_object
+    if armature is None or armature.type != 'ARMATURE':
+        self.report({'WARNING'}, "No active armature")
+        return {'CANCELLED'}
+
+    selected_bones = context.selected_pose_bones or []
+    if not selected_bones:
+        self.report({'WARNING'}, "No selected bones")
+        return {'CANCELLED'}
+
+    if armature.animation_data is None or armature.animation_data.action is None:
+        self.report({'WARNING'}, "Active armature has no action")
+        return {'CANCELLED'}
+
+    action = armature.animation_data.action
+    rotation_paths = set()
+    for bone in selected_bones:
+        prefix = f'pose.bones["{bone.name}"].'
+        rotation_paths.add(prefix + "rotation_euler")
+        rotation_paths.add(prefix + "rotation_quaternion")
+        rotation_paths.add(prefix + "rotation_axis_angle")
+
+    removed_keys = 0
+    for fcurve in list(action.fcurves):
+        if fcurve.data_path in rotation_paths:
+            removed_keys += len(fcurve.keyframe_points)
+            action.fcurves.remove(fcurve)
+
+    self.report({'INFO'}, "Deleted " + str(removed_keys) + " rotation key(s) from " + str(len(selected_bones)) + " selected bone(s)")
+    return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
+
 class POSE_OT_MarkStartPose(Operator):
     bl_idname = "pose.mark_start_pose"
     bl_label = "Mark Start Pose"
@@ -437,6 +532,49 @@ class POSE_OT_PasteDelta(Operator):
         return {'FINISHED'}
 
 # -------------------------------------------------------------------------------------------------
+
+class POSE_OT_DeleteAllScaleKeys(Operator):
+    bl_idname = "pose.delete_all_scale_keys"
+    bl_label = "Delete all scale keys"
+    bl_description = "Deletes all scale keys of selected bones on active armature action"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'POSE' and context.active_object and context.active_object.type == 'ARMATURE'
+
+    def execute(self, context):
+        return deleteAllScaleKeysFromSelectedBones(self, context)
+
+# -------------------------------------------------------------------------------------------------
+
+class POSE_OT_DeleteAllLocationKeys(Operator):
+    bl_idname = "pose.delete_all_location_keys"
+    bl_label = "Delete all location keys"
+    bl_description = "Deletes all location keys of selected bones on active armature action"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'POSE' and context.active_object and context.active_object.type == 'ARMATURE'
+
+    def execute(self, context):
+        return deleteAllLocationKeysFromSelectedBones(self, context)
+
+class POSE_OT_DeleteAllRotationKeys(Operator):
+    bl_idname = "pose.delete_all_rotation_keys"
+    bl_label = "Delete all rotation keys"
+    bl_description = "Deletes all rotation keys of selected bones on active armature action"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'POSE' and context.active_object and context.active_object.type == 'ARMATURE'
+
+    def execute(self, context):
+        return deleteAllRotationKeysFromSelectedBones(self, context)
+
+# -------------------------------------------------------------------------------------------------
 # Panels
 
 class OBJECT_PT_armature_utilities(bpy.types.Panel):
@@ -533,6 +671,9 @@ class OBJECT_PT_bone_utilities(bpy.types.Panel):
         box.operator(POSE_OT_MarkStartPose.bl_idname)
         box.operator(POSE_OT_CopyDelta.bl_idname)
         box.operator(POSE_OT_PasteDelta.bl_idname)
+        box.operator(POSE_OT_DeleteAllLocationKeys.bl_idname)
+        box.operator(POSE_OT_DeleteAllRotationKeys.bl_idname)
+        box.operator(POSE_OT_DeleteAllScaleKeys.bl_idname)
 
 # -------------------------------------------------------------------------------------------------
 # Registering
@@ -548,6 +689,9 @@ def register():
     bpy.utils.register_class(POSE_OT_MarkStartPose)
     bpy.utils.register_class(POSE_OT_CopyDelta)
     bpy.utils.register_class(POSE_OT_PasteDelta)
+    bpy.utils.register_class(POSE_OT_DeleteAllLocationKeys)
+    bpy.utils.register_class(POSE_OT_DeleteAllRotationKeys)
+    bpy.utils.register_class(POSE_OT_DeleteAllScaleKeys)
 
 def unregister():
     bpy.utils.unregister_class(OBJECT_OT_CopyArmatureConstraints)
@@ -560,6 +704,9 @@ def unregister():
     bpy.utils.unregister_class(POSE_OT_MarkStartPose)
     bpy.utils.unregister_class(POSE_OT_CopyDelta)
     bpy.utils.unregister_class(POSE_OT_PasteDelta)
+    bpy.utils.unregister_class(POSE_OT_DeleteAllLocationKeys)
+    bpy.utils.unregister_class(POSE_OT_DeleteAllRotationKeys)
+    bpy.utils.unregister_class(POSE_OT_DeleteAllScaleKeys)
 
 if __name__ == "__main__":
     register()
