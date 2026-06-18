@@ -1,0 +1,83 @@
+--- Purge all orphans ---
+Removes orphan data blocks (meshes, materials, textures, etc.) not referenced by
+any object in the current scene. Runs Blender's built-in orphan purge
+recursively.
+
+--- Hide all particles ---
+Hides viewport display of all particle system modifiers on all objects in the
+current scene.
+
+--- Show all particles ---
+Shows viewport display of all particle system modifiers on all objects in the
+current scene.
+
+--- Diff object data ---
+Compares custom properties, vertex groups, vertex colors, modifiers, and bone
+constraints between two selected objects. Shows differences in a popup dialog.
+
+--- Sync object properties ---
+Copies custom properties from the active object (source) to the first selected
+object (target) that do not already exist on the target. Only new properties are
+added, existing ones are left unchanged.
+
+--- Copy object property values ---
+Copies values of existing custom properties from the active object to the first
+selected object. Only updates properties already present on the target, does not
+create new ones.
+
+--- Copy object materials ---
+Copies material slot assignments from the active object to the first selected
+object. Both objects must have the same number of material slots.
+
+--- Make all properties overridable ---
+Sets every custom property on the active object as overridable for library
+overrides. Useful when the object is used in linked scenes.
+
+--- Toggle shadow catcher ---
+Toggles the Shadow Catcher property on all selected objects. Switches between
+enabled and disabled.
+
+--- Remove empty vertex groups ---
+Removes vertex groups that have no vertex with a weight above 0.01 (or whose
+mirrored counterpart has none). Useful for cleaning up weight-painted meshes.
+
+--- Remove all modifiers ---
+Removes all modifiers from selected objects. Useful before exporting or baking.
+
+--- Update common mesh ---
+Select two mesh objects: source (active) and target. Extracts faces fully
+weighted (>0.9) in the 'Common' vertex group from source, deletes those faces
+from target, joins them, and merges vertices by distance.
+
+--- Copy object transform ---
+Copies location, rotation, and scale from the active object into memory. Use
+"Paste object transform" to apply to another object.
+
+--- Paste object transform ---
+Pastes previously copied location, rotation, and scale onto the active object.
+
+--- Remove location keyframes ---
+Removes all location keyframes from selected objects at the current frame.
+Useful for cleaning unwanted animation channels.
+
+--- Remove euler rotation keyframes ---
+Removes all Euler rotation keyframes from selected objects at the current
+frame.
+
+--- Remove quat rotation keyframes ---
+Removes all quaternion rotation keyframes from selected objects at the current
+frame.
+
+--- Remove scale keyframes ---
+Removes all scale keyframes from selected objects at the current frame.
+
+--- Clean up materials and images ---
+Removes all unused materials and image data blocks from the current Blender
+file. Useful for reducing file size.
+
+--- Toggle renderers ---
+Switches the viewport render engine between Cycles and Workbench. Useful for
+quick preview toggling.
+
+--- Pause render ---
+Toggles the Cycles viewport preview pause on and off.
