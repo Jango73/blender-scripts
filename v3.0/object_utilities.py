@@ -522,6 +522,107 @@ def removeKeyframesByChannel(self, context, channel):
 
 # -----------------------------------------------------------------------------
 
+def updateCommonMesh(self, context):
+    target = context.selected_objects[0]
+    source = context.active_object
+
+    if source is None or target is None:
+        return {'CANCELLED'}
+
+    if target == source:
+        if len(context.selected_objects) < 2:
+            return {'CANCELLED'}
+        target = context.selected_objects[1]
+
+    if target is None:
+        return {'CANCELLED'}
+
+    if source.type != 'MESH' or target.type != 'MESH':
+        self.report({'ERROR'}, "Both objects must be meshes")
+        return {'CANCELLED'}
+
+    vg = source.vertex_groups.get("Common")
+    if vg is None:
+        self.report({'ERROR'}, "No 'Common' vertex group found on source")
+        return {'CANCELLED'}
+
+    prev_mode = context.mode
+    if prev_mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    bpy.ops.object.select_all(action='DESELECT')
+
+    # Step 1-3: Duplicate Common faces from source and separate into temp
+    source.select_set(True)
+    context.view_layer.objects.active = source
+
+    names_before = set(o.name for o in bpy.data.objects)
+
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='DESELECT')
+    bpy.ops.mesh.select_mode(type='VERT')
+
+    source.vertex_groups.active_index = vg.index
+    bpy.ops.object.vertex_group_select()
+
+    bpy.ops.mesh.select_mode(type='FACE')
+    bpy.ops.mesh.duplicate()
+    bpy.ops.mesh.separate(type='SELECTED')
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    names_after = set(o.name for o in bpy.data.objects)
+    new_names = names_after - names_before
+    if not new_names:
+        self.report({'ERROR'}, "Could not create temporary mesh")
+        return {'CANCELLED'}
+    temp = bpy.data.objects[new_names.pop()]
+    temp.name = "temp"
+
+    # Remove all modifiers from temp
+    temp.modifiers.clear()
+
+    # Step 4: Delete Common faces from target
+    bpy.ops.object.select_all(action='DESELECT')
+    target.select_set(True)
+    context.view_layer.objects.active = target
+
+    vg_target = target.vertex_groups.get("Common")
+    if vg_target:
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='DESELECT')
+        bpy.ops.mesh.select_mode(type='VERT')
+
+        target.vertex_groups.active_index = vg_target.index
+        bpy.ops.object.vertex_group_select()
+
+        bpy.ops.mesh.select_mode(type='FACE')
+        bpy.ops.mesh.delete(type='FACE')
+
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    # Step 5: Join temp with target
+    bpy.ops.object.select_all(action='DESELECT')
+    temp.select_set(True)
+    target.select_set(True)
+    context.view_layer.objects.active = target
+    bpy.ops.object.join()
+
+    # Step 6: Merge by distance
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.remove_doubles(threshold=0.0001)
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    bpy.ops.object.select_all(action='DESELECT')
+    target.select_set(True)
+    context.view_layer.objects.active = target
+
+    self.report({'INFO'}, "Updated common mesh")
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
 def cleanUpMaterialsAndImages(context):
     # iterate over all materials in the file
     for material in bpy.data.materials:
@@ -702,6 +803,16 @@ class OBJECT_OT_RemoveAllModifiers(bpy.types.Operator):
     def execute(self, context):
         return removeAllModifiers(self, context)
 
+class OBJECT_OT_UpdateCommonMesh(bpy.types.Operator):
+    """Update Common Mesh"""
+    bl_idname = "object.update_common_mesh"
+    bl_label = "Update common mesh"
+    bl_description = "Updates the common mesh based on vertex group 'Common'"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return updateCommonMesh(self, context)
+
 class OBJECT_OT_ToggleShadowCatcher(bpy.types.Operator):
     """Toggle Shadow Catcher"""
     bl_idname = "object.toggle_shadow_catcher"
@@ -849,6 +960,7 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.toggle_shadow_catcher")
         box.operator("object.remove_empty_vertex_groups")
         box.operator("object.remove_all_modifiers")
+        box.operator("object.update_common_mesh")
 
         box = layout.box()
         box.operator("object.copy_object_transform")
@@ -927,6 +1039,7 @@ def register():
     bpy.utils.register_class(OBJECT_OT_ToggleShadowCatcher)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
+    bpy.utils.register_class(OBJECT_OT_UpdateCommonMesh)
 
     bpy.utils.register_class(OBJECT_OT_CopyObjectTransform)
     bpy.utils.register_class(OBJECT_OT_PasteObjectTransform)
@@ -969,6 +1082,7 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_ToggleShadowCatcher)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
+    bpy.utils.unregister_class(OBJECT_OT_UpdateCommonMesh)
 
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectTransform)
     bpy.utils.unregister_class(OBJECT_OT_PasteObjectTransform)
