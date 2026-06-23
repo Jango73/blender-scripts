@@ -618,7 +618,7 @@ def updateCommonMesh(self, context):
     target.select_set(True)
     context.view_layer.objects.active = target
 
-    self.report({'INFO'}, "Updated common mesh")
+    self.report({'INFO'}, f"mesh common data copied from {source.name} to {target.name}")
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
