@@ -33,6 +33,9 @@ import copy
 # Global storage for transform copy/paste
 _copied_transform = None
 
+# Global storage for modifier/custom params copy/paste
+_copied_modifier_data = None
+
 # -----------------------------------------------------------------------------
 # Following two functions are from "blenderartists.org/u/Gorgious" in "object_copy_custom_properties_1_08.py"
 
@@ -503,6 +506,166 @@ def pasteObjectTransform(self, context):
 
 # -----------------------------------------------------------------------------
 
+def _sanitize_value(value):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _sanitize_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_value(v) for v in value]
+    return str(value)
+
+def copyModifierParams(self, context):
+    global _copied_modifier_data
+    obj = context.active_object
+
+    if obj is None:
+        self.report({'ERROR'}, "No active object.")
+        return {'CANCELLED'}
+
+    if len(context.selected_objects) != 1:
+        self.report({'ERROR'}, "Select exactly one object.")
+        return {'CANCELLED'}
+
+    modifier_data = []
+    for mod in obj.modifiers:
+        safe_types = {'BOOLEAN', 'INT', 'FLOAT', 'STRING', 'ENUM', 'BOOLEAN_ARRAY', 'INT_ARRAY', 'FLOAT_ARRAY'}
+        params = {}
+        for prop in mod.bl_rna.properties:
+            if prop.identifier in ('name', 'type', 'rna_type', 'show_viewport', 'show_render', 'show_in_editmode', 'show_on_cage', 'show_expanded', 'is_active'):
+                continue
+            if prop.is_readonly:
+                continue
+            if prop.type not in safe_types:
+                continue
+            try:
+                value = getattr(mod, prop.identifier)
+                if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
+                    value = list(value)
+                params[prop.identifier] = value
+            except:
+                pass
+        input_params = {}
+        try:
+            mod_keys = mod.keys()
+        except TypeError:
+            mod_keys = []
+        try:
+            rna_ui = mod.get("_RNA_UI")
+        except TypeError:
+            rna_ui = None
+        for key in mod_keys:
+            if key == '_RNA_UI':
+                continue
+            try:
+                val = mod[key]
+                sanitized = _sanitize_value(val)
+                is_overridable = mod.is_property_overridable_library(f'["{key}"]')
+                entry = {"value": sanitized, "is_overridable": is_overridable}
+                if rna_ui and key in rna_ui:
+                    entry["rna_ui"] = _sanitize_value(rna_ui[key])
+                input_params[key] = entry
+            except:
+                pass
+        modifier_data.append({
+            "name": mod.name,
+            "type": mod.type,
+            "params": params,
+            "input_params": input_params,
+        })
+
+    custom_props = []
+    for name, value, rna, is_overridable in getProperties(obj):
+        try:
+            sanitized = _sanitize_value(value)
+            custom_props.append({"name": name, "value": sanitized})
+        except:
+            pass
+
+    _copied_modifier_data = {
+        "modifiers": modifier_data,
+        "custom_properties": custom_props,
+    }
+
+    count_mods = len(modifier_data)
+    count_cp = len(custom_props)
+    self.report({'INFO'}, f"Copied {count_mods} modifier(s) and {count_cp} custom propert{'y' if count_cp == 1 else 'ies'} from {obj.name}")
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
+def pasteModifierParams(self, context):
+    global _copied_modifier_data
+    obj = context.active_object
+
+    if obj is None:
+        self.report({'ERROR'}, "No active object.")
+        return {'CANCELLED'}
+
+    if len(context.selected_objects) != 1:
+        self.report({'ERROR'}, "Select exactly one object.")
+        return {'CANCELLED'}
+
+    if _copied_modifier_data is None:
+        self.report({'WARNING'}, "No modifier data stored. Use 'Copy' first.")
+        return {'CANCELLED'}
+
+    used_names = set()
+
+    for idx, src_mod in enumerate(_copied_modifier_data["modifiers"]):
+        target_mod = None
+
+        for m in obj.modifiers:
+            if m.name.lower() == src_mod["name"].lower() and m.name not in used_names:
+                target_mod = m
+                break
+
+        if target_mod is None:
+            if idx < len(obj.modifiers):
+                m = obj.modifiers[idx]
+                if m.type == src_mod["type"] and m.name not in used_names:
+                    target_mod = m
+
+        if target_mod is None:
+            continue
+
+        used_names.add(target_mod.name)
+
+        safe_types = {'BOOLEAN', 'INT', 'FLOAT', 'STRING', 'ENUM', 'BOOLEAN_ARRAY', 'INT_ARRAY', 'FLOAT_ARRAY'}
+        skip_props = {'show_viewport', 'show_render', 'show_in_editmode', 'show_on_cage', 'show_expanded', 'is_active'}
+        for prop_name, prop_value in src_mod["params"].items():
+            if prop_name in skip_props:
+                continue
+            rna_prop = target_mod.bl_rna.properties.get(prop_name)
+            if rna_prop is None or rna_prop.type not in safe_types:
+                continue
+            try:
+                setattr(target_mod, prop_name, prop_value)
+            except:
+                pass
+
+        for iname, ientry in src_mod.get("input_params", {}).items():
+            try:
+                target_mod[iname] = ientry["value"]
+                if "rna_ui" in ientry:
+                    target_mod.id_properties_ui(iname).update_from(ientry["rna_ui"])
+                target_mod.property_overridable_library_set(f'["{iname}"]', ientry.get("is_overridable", True))
+            except:
+                pass
+
+    for cp in _copied_modifier_data["custom_properties"]:
+        try:
+            obj[cp["name"]] = cp["value"]
+        except:
+            pass
+
+    count_mods = len(_copied_modifier_data["modifiers"])
+    count_cp = len(_copied_modifier_data["custom_properties"])
+    self.report({'INFO'}, f"Pasted {count_mods} modifier(s) and {count_cp} custom propert{'y' if count_cp == 1 else 'ies'} to {obj.name}")
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
 def removeKeyframesByChannel(self, context, channel):
     for obj in context.selected_objects:
 
@@ -843,6 +1006,26 @@ class OBJECT_OT_PasteObjectTransform(bpy.types.Operator):
     def execute(self, context):
         return pasteObjectTransform(self, context)
 
+class OBJECT_OT_CopyModifierParams(bpy.types.Operator):
+    """Copy modifier and custom params"""
+    bl_idname = "object.copy_modifier_params"
+    bl_label = "Copy modifier and custom params"
+    bl_description = "Copies all modifier parameters and custom properties of the active object to memory"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return copyModifierParams(self, context)
+
+class OBJECT_OT_PasteModifierParams(bpy.types.Operator):
+    """Paste modifier and custom params"""
+    bl_idname = "object.paste_modifier_params"
+    bl_label = "Paste modifier and custom params"
+    bl_description = "Pastes all modifier parameters and custom properties to the active object from memory"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return pasteModifierParams(self, context)
+
 class OBJECT_OT_RemoveLocationKeyframes(bpy.types.Operator):
     """RemoveLocationKeyframes"""
     bl_idname = "object.remove_location_keyframes"
@@ -964,7 +1147,15 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
 
         box = layout.box()
         box.operator("object.copy_object_transform")
-        box.operator("object.paste_object_transform")
+        row = box.row()
+        row.enabled = _copied_transform is not None
+        row.operator("object.paste_object_transform")
+
+        box = layout.box()
+        box.operator("object.copy_modifier_params")
+        row = box.row()
+        row.enabled = _copied_modifier_data is not None
+        row.operator("object.paste_modifier_params")
 
         box = layout.box()
         box.operator("object.remove_location_keyframes")
@@ -1043,6 +1234,8 @@ def register():
 
     bpy.utils.register_class(OBJECT_OT_CopyObjectTransform)
     bpy.utils.register_class(OBJECT_OT_PasteObjectTransform)
+    bpy.utils.register_class(OBJECT_OT_CopyModifierParams)
+    bpy.utils.register_class(OBJECT_OT_PasteModifierParams)
     bpy.utils.register_class(OBJECT_OT_RemoveLocationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveEulerRotationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveQuatRotationKeyframes)
@@ -1086,6 +1279,8 @@ def unregister():
 
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectTransform)
     bpy.utils.unregister_class(OBJECT_OT_PasteObjectTransform)
+    bpy.utils.unregister_class(OBJECT_OT_CopyModifierParams)
+    bpy.utils.unregister_class(OBJECT_OT_PasteModifierParams)
     bpy.utils.unregister_class(OBJECT_OT_RemoveLocationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEulerRotationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveQuatRotationKeyframes)
