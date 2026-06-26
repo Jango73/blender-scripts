@@ -527,8 +527,11 @@ def copyModifierParams(self, context):
         self.report({'ERROR'}, "Select exactly one object.")
         return {'CANCELLED'}
 
+    skip_modifier_types = {'CLOTH', 'COLLISION', 'DYNAMIC_PAINT', 'EXPLODE', 'FLUID', 'OCEAN', 'PARTICLE_SYSTEM', 'SOFT_BODY', 'SURFACE'}
     modifier_data = []
     for mod in obj.modifiers:
+        if mod.type in skip_modifier_types:
+            continue
         safe_types = {'BOOLEAN', 'INT', 'FLOAT', 'STRING', 'ENUM', 'BOOLEAN_ARRAY', 'INT_ARRAY', 'FLOAT_ARRAY'}
         params = {}
         for prop in mod.bl_rna.properties:
@@ -611,11 +614,14 @@ def pasteModifierParams(self, context):
         return {'CANCELLED'}
 
     used_names = set()
+    skip_modifier_types = {'CLOTH', 'COLLISION', 'DYNAMIC_PAINT', 'EXPLODE', 'FLUID', 'OCEAN', 'PARTICLE_SYSTEM', 'SOFT_BODY', 'SURFACE'}
 
     for idx, src_mod in enumerate(_copied_modifier_data["modifiers"]):
         target_mod = None
 
         for m in obj.modifiers:
+            if m.type in skip_modifier_types:
+                continue
             if m.name.lower() == src_mod["name"].lower() and m.name not in used_names:
                 target_mod = m
                 break
@@ -623,6 +629,8 @@ def pasteModifierParams(self, context):
         if target_mod is None:
             if idx < len(obj.modifiers):
                 m = obj.modifiers[idx]
+                if m.type in skip_modifier_types:
+                    continue
                 if m.type == src_mod["type"] and m.name not in used_names:
                     target_mod = m
 
