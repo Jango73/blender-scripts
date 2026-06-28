@@ -19,15 +19,17 @@
 bl_info = {
     "name": "Object utilities",
     "author": "Jango73",
-    "version": (3, 3),
+    "version": (3, 4),
     "blender": (3, 0, 0),
     "description": "Operations on objects",
     "category": "Object",
 }
 
 import bpy
+import bmesh
 import re
 import copy
+from mathutils.kdtree import KDTree
 
 # -------------------------------------------------------------------
 # Global storage for transform copy/paste
@@ -862,6 +864,54 @@ def rotateFaceVertexIndices(context):
     return {'FINISHED'}
 
 # -----------------------------------------------------------------------------
+
+def selectMergeByDistanceVerts(self, context, threshold):
+    obj = context.active_object
+    if obj is None or obj.type != 'MESH':
+        self.report({'ERROR'}, "Active object is not a mesh")
+        return {'CANCELLED'}
+
+    me = obj.data
+    bm = bmesh.from_edit_mesh(me)
+
+    bm.verts.ensure_lookup_table()
+
+    for v in bm.verts:
+        v.select = False
+
+    if len(bm.verts) == 0:
+        bmesh.update_edit_mesh(me)
+        self.report({'WARNING'}, "No vertices in mesh")
+        return {'CANCELLED'}
+
+    tree = KDTree(len(bm.verts))
+    for i, v in enumerate(bm.verts):
+        tree.insert(v.co, i)
+    tree.balance()
+
+    selected_indices = set()
+    for i, v in enumerate(bm.verts):
+        neighbors = list(tree.find_range(v.co, threshold))
+        if len(neighbors) > 1:
+            selected_indices.add(i)
+            for (co, idx, dist) in neighbors:
+                if idx != i:
+                    selected_indices.add(idx)
+
+    for i in selected_indices:
+        bm.verts[i].select = True
+
+    bmesh.update_edit_mesh(me)
+
+    count = len(selected_indices)
+    if count == 0:
+        self.report({'INFO'}, "No vertices to merge found")
+    else:
+        self.report({'INFO'}, f"Selected {count} vertice(s) that would be merged")
+
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
 # Operators
 
 class OBJECT_OT_PurgeAll(bpy.types.Operator):
@@ -1074,6 +1124,31 @@ class OBJECT_OT_RemoveScaleKeyframes(bpy.types.Operator):
     def execute(self, context):
         return removeKeyframesByChannel(self, context, "scale")
 
+class OBJECT_OT_SelectMergeByDistance(bpy.types.Operator):
+    """Select vertices that would be merged by distance"""
+    bl_idname = "object.select_merge_by_distance"
+    bl_label = "Select merge by distance"
+    bl_description = "Selects vertices that would be affected by merge by distance operation"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    threshold: bpy.props.FloatProperty(
+        name="Threshold",
+        description="Maximum distance between vertices to consider for merging",
+        default=0.0001,
+        min=0.0,
+        max=1.0,
+        precision=6,
+        step=0.01,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH' and obj.mode == 'EDIT'
+
+    def execute(self, context):
+        return selectMergeByDistanceVerts(self, context, self.threshold)
+
 class OBJECT_OT_CleanUpMaterialsAndImages(bpy.types.Operator):
     """Clean Up Materials And Images"""
     bl_idname = "object.clean_up_materials_and_images"
@@ -1203,7 +1278,7 @@ class OBJECT_PT_object_edit_utilities(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
-        box.operator("object.rotate_face_vertex_indices")
+        box.operator("object.select_merge_by_distance")
 
 class SCENE_PT_render_utilities(bpy.types.Panel):
     bl_idname = "SCENE_PT_render_utilities"
@@ -1249,6 +1324,7 @@ def register():
     bpy.utils.register_class(OBJECT_OT_RemoveQuatRotationKeyframes)
     bpy.utils.register_class(OBJECT_OT_RemoveScaleKeyframes)
 
+    bpy.utils.register_class(OBJECT_OT_SelectMergeByDistance)
     bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
 #    bpy.utils.register_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
@@ -1256,7 +1332,7 @@ def register():
 
     bpy.utils.register_class(OBJECT_PT_object_utilities)
     bpy.utils.register_class(OBJECT_PT_misc_utilities)
-#    bpy.utils.register_class(OBJECT_PT_object_edit_utilities)
+    bpy.utils.register_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.register_class(SCENE_PT_render_utilities)
 
     # handle the keymap
@@ -1294,6 +1370,7 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_RemoveQuatRotationKeyframes)
     bpy.utils.unregister_class(OBJECT_OT_RemoveScaleKeyframes)
 
+    bpy.utils.unregister_class(OBJECT_OT_SelectMergeByDistance)
     bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
 #    bpy.utils.unregister_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
@@ -1301,7 +1378,7 @@ def unregister():
 
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
     bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
-#    bpy.utils.unregister_class(OBJECT_PT_object_edit_utilities)
+    bpy.utils.unregister_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.unregister_class(SCENE_PT_render_utilities)
 
 if __name__ == "__main__":
