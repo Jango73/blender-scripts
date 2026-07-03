@@ -584,6 +584,7 @@ class OBJECT_PT_armature_utilities(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "Edit"
     bl_context = 'objectmode'
+    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
@@ -660,6 +661,7 @@ class OBJECT_PT_bone_utilities(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Edit"
+    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):

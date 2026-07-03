@@ -27,8 +27,10 @@ bl_info = {
 
 import bpy
 import bmesh
+import math
 import re
 import copy
+from datetime import datetime
 from mathutils.kdtree import KDTree
 
 # -------------------------------------------------------------------
@@ -1204,6 +1206,7 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "Edit"
     bl_context = 'objectmode'
+    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
@@ -1253,6 +1256,7 @@ class OBJECT_PT_misc_utilities(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "Edit"
     bl_context = 'objectmode'
+    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
@@ -1269,6 +1273,7 @@ class OBJECT_PT_object_edit_utilities(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "Edit"
     bl_context = 'mesh_edit'
+    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
@@ -1286,6 +1291,7 @@ class SCENE_PT_render_utilities(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Edit"
+    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
@@ -1295,6 +1301,370 @@ class SCENE_PT_render_utilities(bpy.types.Panel):
         layout = self.layout
         layout.operator("scene.toggle_renderers")
         layout.operator("scene.pause_render")
+
+# -----------------------------------------------------------------------------
+# Sun position calculator
+
+_updating_sun_coords = 0
+
+def compute_sun_position(lat, lon, year, month, day, hour, minute, utc_offset):
+    n = datetime(year, month, day).timetuple().tm_yday
+
+    gamma = 2 * math.pi / 365 * (n - 1)
+
+    decl = (0.006918 - 0.399912 * math.cos(gamma) + 0.070257 * math.sin(gamma)
+            - 0.006758 * math.cos(2*gamma) + 0.000907 * math.sin(2*gamma)
+            - 0.002697 * math.cos(3*gamma) + 0.00148 * math.sin(3*gamma))
+
+    eot = 229.18 * (0.000075 + 0.001868 * math.cos(gamma) - 0.032077 * math.sin(gamma)
+                    - 0.014615 * math.cos(2*gamma) - 0.04089 * math.sin(2*gamma))
+
+    time_local = hour + minute / 60.0
+    time_utc = time_local - utc_offset
+    solar_time = time_utc + lon / 15.0 + eot / 60.0
+    ha = math.radians(15 * (solar_time - 12))
+
+    lat_rad = math.radians(lat)
+
+    sin_elev = (math.sin(lat_rad) * math.sin(decl) +
+                math.cos(lat_rad) * math.cos(decl) * math.cos(ha))
+    sin_elev = max(-1, min(1, sin_elev))
+    elevation = math.degrees(math.asin(sin_elev))
+
+    if math.cos(math.asin(sin_elev)) > 0.001:
+        az_rad = math.atan2(math.sin(ha),
+                            math.cos(ha) * math.sin(lat_rad) - math.tan(decl) * math.cos(lat_rad))
+        az_south = math.degrees(az_rad) % 360
+        azimuth = (az_south + 180) % 360
+    else:
+        azimuth = 0.0
+
+    return elevation, azimuth
+
+
+def _sun_auto_calc(props, context):
+    if not props.auto_calc:
+        return
+    try:
+        elevation, azimuth = compute_sun_position(
+            props.latitude, props.longitude,
+            props.year, props.month, props.day,
+            props.hour, props.minute, props.utc_offset
+        )
+        props.elevation = round(elevation, 4)
+        props.azimuth = round(azimuth, 4)
+    except:
+        pass
+
+
+def _update_lat_dec(self, context):
+    global _updating_sun_coords
+    if _updating_sun_coords > 0:
+        return
+    _updating_sun_coords += 1
+    try:
+        v = abs(self.latitude)
+        d = int(v)
+        m = int((v - d) * 60)
+        s = ((v - d) * 60 - m) * 60
+        if self.lat_deg != d:
+            self.lat_deg = d
+        if self.lat_min != m:
+            self.lat_min = m
+        if abs(self.lat_sec - s) > 0.0001:
+            self.lat_sec = s
+        _sun_auto_calc(self, context)
+    finally:
+        _updating_sun_coords -= 1
+
+
+def _update_lon_dec(self, context):
+    global _updating_sun_coords
+    if _updating_sun_coords > 0:
+        return
+    _updating_sun_coords += 1
+    try:
+        v = abs(self.longitude)
+        d = int(v)
+        m = int((v - d) * 60)
+        s = ((v - d) * 60 - m) * 60
+        if self.lon_deg != d:
+            self.lon_deg = d
+        if self.lon_min != m:
+            self.lon_min = m
+        if abs(self.lon_sec - s) > 0.0001:
+            self.lon_sec = s
+        _sun_auto_calc(self, context)
+    finally:
+        _updating_sun_coords -= 1
+
+
+def _update_lat_dms(self, context):
+    global _updating_sun_coords
+    if _updating_sun_coords > 0:
+        return
+    _updating_sun_coords += 1
+    try:
+        v = self.lat_deg + self.lat_min / 60.0 + self.lat_sec / 3600.0
+        if self.lat_dir == 'S':
+            v = -v
+        if abs(self.latitude - v) > 0.000001:
+            self.latitude = v
+    finally:
+        _updating_sun_coords -= 1
+    _sun_auto_calc(self, context)
+
+
+def _update_lon_dms(self, context):
+    global _updating_sun_coords
+    if _updating_sun_coords > 0:
+        return
+    _updating_sun_coords += 1
+    try:
+        v = self.lon_deg + self.lon_min / 60.0 + self.lon_sec / 3600.0
+        if self.lon_dir == 'W':
+            v = -v
+        if abs(self.longitude - v) > 0.000001:
+            self.longitude = v
+    finally:
+        _updating_sun_coords -= 1
+    _sun_auto_calc(self, context)
+
+
+def _sun_date_time_changed(self, context):
+    _sun_auto_calc(self, context)
+
+
+class SunCalculatorProperties(bpy.types.PropertyGroup):
+    latitude: bpy.props.FloatProperty(
+        name="Latitude",
+        description="Latitude in decimal degrees (-90 to 90)",
+        default=48.8566,
+        min=-90.0, max=90.0,
+        update=_update_lat_dec,
+    )
+    longitude: bpy.props.FloatProperty(
+        name="Longitude",
+        description="Longitude in decimal degrees (-180 to 180)",
+        default=2.3522,
+        min=-180.0, max=180.0,
+        update=_update_lon_dec,
+    )
+
+    lat_deg: bpy.props.IntProperty(
+        name="\u00b0", description="Latitude degrees",
+        default=48, min=0, max=90,
+        update=_update_lat_dms,
+    )
+    lat_min: bpy.props.IntProperty(
+        name="'", description="Latitude minutes",
+        default=0, min=0, max=59,
+        update=_update_lat_dms,
+    )
+    lat_sec: bpy.props.FloatProperty(
+        name='"', description="Latitude seconds",
+        default=0.0, min=0.0, max=59.999,
+        update=_update_lat_dms,
+    )
+    lon_deg: bpy.props.IntProperty(
+        name="\u00b0", description="Longitude degrees",
+        default=2, min=0, max=180,
+        update=_update_lon_dms,
+    )
+    lon_min: bpy.props.IntProperty(
+        name="'", description="Longitude minutes",
+        default=0, min=0, max=59,
+        update=_update_lon_dms,
+    )
+    lon_sec: bpy.props.FloatProperty(
+        name='"', description="Longitude seconds",
+        default=0.0, min=0.0, max=59.999,
+        update=_update_lon_dms,
+    )
+
+    lat_dir: bpy.props.EnumProperty(
+        name="Lat hemisphere",
+        items=[('N', "N", "North"), ('S', "S", "South")],
+        default='N',
+        update=_update_lat_dms,
+    )
+    lon_dir: bpy.props.EnumProperty(
+        name="Lon hemisphere",
+        items=[('E', "E", "East"), ('W', "W", "West")],
+        default='E',
+        update=_update_lon_dms,
+    )
+
+    use_dms: bpy.props.BoolProperty(
+        name="DMS",
+        description="Display coordinates in degrees/minutes/seconds",
+        default=False,
+    )
+
+    year: bpy.props.IntProperty(
+        name="Year", default=2025, min=1, max=3000,
+        update=_sun_date_time_changed,
+    )
+    month: bpy.props.IntProperty(
+        name="Month", default=6, min=1, max=12,
+        update=_sun_date_time_changed,
+    )
+    day: bpy.props.IntProperty(
+        name="Day", default=21, min=1, max=31,
+        update=_sun_date_time_changed,
+    )
+    hour: bpy.props.IntProperty(
+        name="Hour", default=12, min=0, max=23,
+        update=_sun_date_time_changed,
+    )
+    minute: bpy.props.IntProperty(
+        name="Min", default=0, min=0, max=59,
+        update=_sun_date_time_changed,
+    )
+    utc_offset: bpy.props.FloatProperty(
+        name="UTC+",
+        description="UTC offset in hours (e.g. 1 for CET, -5 for EST)",
+        default=0, min=-12, max=14,
+        update=_sun_date_time_changed,
+    )
+
+    azimuth: bpy.props.FloatProperty(
+        name="Sun azimuth",
+        description="Calculated sun azimuth in degrees (0=North, clockwise)",
+        default=0.0,
+    )
+    elevation: bpy.props.FloatProperty(
+        name="Sun elevation",
+        description="Calculated sun elevation in degrees",
+        default=0.0,
+    )
+    auto_calc: bpy.props.BoolProperty(
+        name="Auto",
+        description="Automatically recalculate on input change",
+        default=True,
+    )
+
+
+class SCENE_OT_CalculateSunPosition(bpy.types.Operator):
+    bl_idname = "scene.calculate_sun_position"
+    bl_label = "Calculate"
+    bl_description = "Calculate sun azimuth and elevation from coordinates and time"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.sun_calculator
+        try:
+            elevation, azimuth = compute_sun_position(
+                props.latitude, props.longitude,
+                props.year, props.month, props.day,
+                props.hour, props.minute, props.utc_offset
+            )
+            props.elevation = round(elevation, 4)
+            props.azimuth = round(azimuth, 4)
+            self.report({'INFO'}, f"Azimuth: {azimuth:.2f}°  Elevation: {elevation:.2f}°")
+        except Exception as e:
+            self.report({'ERROR'}, f"Invalid date/time: {str(e)}")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class SCENE_OT_ApplySunToSky(bpy.types.Operator):
+    bl_idname = "scene.apply_sun_to_sky"
+    bl_label = "Use \u2192 Sky Texture"
+    bl_description = "Transfer calculated azimuth and elevation to the Sky Texture in the World material"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        world = context.scene.world
+        if world is None or not world.use_nodes or world.node_tree is None:
+            return False
+        for node in world.node_tree.nodes:
+            if node.type in ('SKY', 'TEX_SKY'):
+                return True
+        return False
+
+    def execute(self, context):
+        props = context.scene.sun_calculator
+        world = context.scene.world
+        for node in world.node_tree.nodes:
+            if node.type in ('SKY', 'TEX_SKY'):
+                node.sun_elevation = math.radians(props.elevation)
+                node.sun_rotation = math.radians(props.azimuth)
+                self.report({'INFO'}, f"Sky texture updated: elev={props.elevation:.2f}°  azim={props.azimuth:.2f}°")
+                return {'FINISHED'}
+        self.report({'WARNING'}, "No Sky Texture node found in world")
+        return {'CANCELLED'}
+
+
+# -----------------------------------------------------------------------------
+# Panels
+
+class SCENE_PT_general_utilities(bpy.types.Panel):
+    bl_idname = "SCENE_PT_general_utilities"
+    bl_label = "General utilities"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Edit"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.sun_calculator
+
+        box = layout.box()
+        box.label(text="Sun position", icon='LIGHT_SUN')
+
+        row = box.row()
+        row.prop(props, "use_dms", text="DMS")
+        if props.use_dms:
+            row = box.row(align=True)
+            row.prop(props, "lat_dir", text="")
+            row.prop(props, "lat_deg")
+            row.prop(props, "lat_min")
+            row.prop(props, "lat_sec")
+            row = box.row(align=True)
+            row.prop(props, "lon_dir", text="")
+            row.prop(props, "lon_deg")
+            row.prop(props, "lon_min")
+            row.prop(props, "lon_sec")
+        else:
+            row = box.row(align=True)
+            row.prop(props, "latitude")
+            row = box.row(align=True)
+            row.prop(props, "longitude")
+
+        box.separator()
+
+        row = box.row(align=True)
+        row.prop(props, "year")
+        row.prop(props, "month")
+        row.prop(props, "day")
+
+        row = box.row(align=True)
+        row.prop(props, "hour")
+        row.prop(props, "minute")
+        row.prop(props, "utc_offset")
+
+        box.separator()
+
+        row = box.row()
+        row.operator("scene.calculate_sun_position")
+        row.prop(props, "auto_calc")
+
+        col = box.column()
+        col.prop(props, "azimuth")
+        col.prop(props, "elevation")
+
+        box.separator()
+
+        row = box.row()
+        row.operator("scene.apply_sun_to_sky")
+
 
 # -----------------------------------------------------------------------------
 # Registering
@@ -1330,10 +1700,16 @@ def register():
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(SCENE_OT_PauseRender)
 
+    bpy.utils.register_class(SunCalculatorProperties)
+    bpy.types.Scene.sun_calculator = bpy.props.PointerProperty(type=SunCalculatorProperties)
+    bpy.utils.register_class(SCENE_OT_CalculateSunPosition)
+    bpy.utils.register_class(SCENE_OT_ApplySunToSky)
+
     bpy.utils.register_class(OBJECT_PT_object_utilities)
     bpy.utils.register_class(OBJECT_PT_misc_utilities)
     bpy.utils.register_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.register_class(SCENE_PT_render_utilities)
+    bpy.utils.register_class(SCENE_PT_general_utilities)
 
     # handle the keymap
     wm = bpy.context.window_manager
@@ -1376,10 +1752,16 @@ def unregister():
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(SCENE_OT_PauseRender)
 
+    bpy.utils.unregister_class(SCENE_OT_CalculateSunPosition)
+    bpy.utils.unregister_class(SCENE_OT_ApplySunToSky)
+    del bpy.types.Scene.sun_calculator
+    bpy.utils.unregister_class(SunCalculatorProperties)
+
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
     bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
     bpy.utils.unregister_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.unregister_class(SCENE_PT_render_utilities)
+    bpy.utils.unregister_class(SCENE_PT_general_utilities)
 
 if __name__ == "__main__":
     register()
