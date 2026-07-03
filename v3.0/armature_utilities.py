@@ -575,6 +575,90 @@ class POSE_OT_DeleteAllRotationKeys(Operator):
         return deleteAllRotationKeysFromSelectedBones(self, context)
 
 # -------------------------------------------------------------------------------------------------
+
+class POSE_OT_ScaleEachBoneModal(Operator):
+    """Scale each selected bone individually by moving mouse up/down"""
+    bl_idname = "pose.scale_each_bone_modal"
+    bl_label = "Scale each bone (interactive)"
+    bl_description = "Scales each selected bone individually. Move mouse up/down to adjust, LMB/Enter to confirm"
+    bl_options = {'REGISTER', 'UNDO', 'BLOCKING'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'POSE' and context.selected_pose_bones
+
+    def invoke(self, context, event):
+        self.initial_scales = {bone.name: bone.scale.copy() for bone in context.selected_pose_bones}
+        if not self.initial_scales:
+            self.report({'WARNING'}, "No bones selected")
+            return {'CANCELLED'}
+        self.init_mouse_y = event.mouse_y
+        self.factor = 1.0
+        self.has_moved = False
+        context.window_manager.modal_handler_add(self)
+        context.area.header_text_set(
+            "Scale each bone: 1.000  |  Move mouse up/down  |  LMB/Enter: confirm  |  RMB/Esc: cancel"
+        )
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'MOUSEMOVE':
+            delta = (event.mouse_y - self.init_mouse_y) * 0.005
+            self.factor = max(0.001, 1.0 + delta)
+            if abs(delta) > 0.001:
+                self.has_moved = True
+            for bone in context.selected_pose_bones:
+                if bone.name in self.initial_scales:
+                    bone.scale = self.initial_scales[bone.name] * self.factor
+            context.area.header_text_set(
+                f"Scale each bone: {self.factor:.3f}  |  Move mouse up/down  |  LMB/Enter: confirm  |  RMB/Esc: cancel"
+            )
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
+        elif event.type == 'RET' and event.value == 'PRESS':
+            context.area.header_text_set(None)
+            self.report({'INFO'}, f"Scaled each bone by {self.factor:.3f}")
+            return {'FINISHED'}
+
+        elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            if not self.has_moved:
+                return {'RUNNING_MODAL'}
+            context.area.header_text_set(None)
+            self.report({'INFO'}, f"Scaled each bone by {self.factor:.3f}")
+            return {'FINISHED'}
+
+        elif event.type in {'RIGHTMOUSE', 'ESC'}:
+            for bone in context.selected_pose_bones:
+                if bone.name in self.initial_scales:
+                    bone.scale = self.initial_scales[bone.name]
+            context.area.header_text_set(None)
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
+
+
+class POSE_OT_ScaleEachBoneApply(Operator):
+    """Apply a scale factor to each selected bone individually"""
+    bl_idname = "pose.scale_each_bone_apply"
+    bl_label = "Scale each bone"
+    bl_description = "Multiplies the local scale of each selected bone by the given factor"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'POSE' and context.selected_pose_bones
+
+    def execute(self, context):
+        factor = context.scene.bone_individual_scale
+        count = 0
+        for bone in context.selected_pose_bones:
+            bone.scale *= factor
+            count += 1
+        self.report({'INFO'}, f"Scaled {count} bone(s) by {factor:.3f}")
+        return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
 # Panels
 
 class OBJECT_PT_armature_utilities(bpy.types.Panel):
@@ -677,8 +761,17 @@ class OBJECT_PT_bone_utilities(bpy.types.Panel):
         box.operator(POSE_OT_DeleteAllRotationKeys.bl_idname)
         box.operator(POSE_OT_DeleteAllScaleKeys.bl_idname)
 
+        box = layout.box()
+        box.label(text="Individual Bone Scale", icon='FULLSCREEN_ENTER')
+        box.operator(POSE_OT_ScaleEachBoneModal.bl_idname)
+        row = box.row(align=True)
+        row.prop(context.scene, "bone_individual_scale")
+        row.operator(POSE_OT_ScaleEachBoneApply.bl_idname, text="Apply")
+
 # -------------------------------------------------------------------------------------------------
 # Registering
+
+addon_keymaps = []
 
 def register():
     bpy.utils.register_class(OBJECT_OT_CopyArmatureConstraints)
@@ -694,8 +787,20 @@ def register():
     bpy.utils.register_class(POSE_OT_DeleteAllLocationKeys)
     bpy.utils.register_class(POSE_OT_DeleteAllRotationKeys)
     bpy.utils.register_class(POSE_OT_DeleteAllScaleKeys)
+    bpy.utils.register_class(POSE_OT_ScaleEachBoneModal)
+    bpy.utils.register_class(POSE_OT_ScaleEachBoneApply)
+    bpy.types.Scene.bone_individual_scale = bpy.props.FloatProperty(
+        name="Scale",
+        description="Scale factor to apply to each selected bone",
+        default=2.0,
+        min=0.001,
+    )
 
 def unregister():
+    for km, kmi in addon_keymaps:
+        km.keymap_items.remove(kmi)
+    addon_keymaps.clear()
+
     bpy.utils.unregister_class(OBJECT_OT_CopyArmatureConstraints)
     bpy.utils.unregister_class(OBJECT_OT_CopyBonePositionsRotations)
     bpy.utils.unregister_class(OBJECT_OT_PasteBonePositionsRotations)
@@ -709,6 +814,9 @@ def unregister():
     bpy.utils.unregister_class(POSE_OT_DeleteAllLocationKeys)
     bpy.utils.unregister_class(POSE_OT_DeleteAllRotationKeys)
     bpy.utils.unregister_class(POSE_OT_DeleteAllScaleKeys)
+    bpy.utils.unregister_class(POSE_OT_ScaleEachBoneModal)
+    bpy.utils.unregister_class(POSE_OT_ScaleEachBoneApply)
+    del bpy.types.Scene.bone_individual_scale
 
 if __name__ == "__main__":
     register()
