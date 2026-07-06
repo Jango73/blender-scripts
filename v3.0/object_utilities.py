@@ -1291,10 +1291,13 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.copy_object_materials")
         box.operator("object.make_all_properties_overridable")
         box.operator("object.toggle_shadow_catcher")
+
+        box.alert = True
         box.operator("object.remove_empty_vertex_groups")
         box.operator("object.remove_all_modifiers")
         box.operator("object.clean_and_apply_modifiers")
         box.operator("object.update_common_mesh")
+        box.alert = False
 
         box = layout.box()
         box.operator("object.copy_object_transform")
