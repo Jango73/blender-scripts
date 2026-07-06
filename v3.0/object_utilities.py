@@ -457,6 +457,60 @@ def removeAllModifiers(self, context):
 
 # -----------------------------------------------------------------------------
 
+def cleanAndApplyModifiers(self, context):
+    simulation_types = {'COLLISION', 'FLUID', 'PARTICLE_SYSTEM', 'CLOTH', 'SOFT_BODY', 'DYNAMIC_PAINT', 'EXPLODE', 'OCEAN', 'SURFACE'}
+
+    for obj in context.selected_objects:
+        for mod in list(obj.modifiers):
+            if mod.type in simulation_types:
+                obj.modifiers.remove(mod)
+        for mod in list(obj.modifiers):
+            if not mod.show_render:
+                obj.modifiers.remove(mod)
+        for mod in obj.modifiers:
+            if mod.show_render and not mod.show_viewport:
+                mod.show_viewport = True
+
+    if context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    original_active = context.view_layer.objects.active
+    original_selected = list(context.selected_objects)
+    depsgraph = context.evaluated_depsgraph_get()
+
+    for obj in original_selected:
+        if len(obj.modifiers) == 0:
+            continue
+
+        if obj.type == 'MESH':
+            obj_eval = obj.evaluated_get(depsgraph)
+            mesh = bpy.data.meshes.new_from_object(obj_eval, preserve_all_data_layers=True, depsgraph=depsgraph)
+            obj.data = mesh
+            obj.modifiers.clear()
+        else:
+            bpy.ops.object.select_all(action='DESELECT')
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+            while obj.modifiers:
+                mod = obj.modifiers[0]
+                try:
+                    bpy.ops.object.modifier_apply(modifier=mod.name)
+                except:
+                    try:
+                        obj.modifiers.remove(obj.modifiers[mod.name])
+                    except:
+                        pass
+
+    bpy.ops.object.select_all(action='DESELECT')
+    for o in original_selected:
+        if o.name in bpy.data.objects:
+            o.select_set(True)
+    if original_active and original_active.name in bpy.data.objects:
+        context.view_layer.objects.active = original_active
+
+    self.report({'INFO'}, "Cleaned and applied modifiers")
+    return {'FINISHED'}
+
 def toggleShadowCatcher(self, context):
     toggled_count = 0
 
@@ -1036,6 +1090,16 @@ class OBJECT_OT_UpdateCommonMesh(bpy.types.Operator):
     def execute(self, context):
         return updateCommonMesh(self, context)
 
+class OBJECT_OT_CleanAndApplyModifiers(bpy.types.Operator):
+    """Clean and Apply Modifiers"""
+    bl_idname = "object.clean_and_apply_modifiers"
+    bl_label = "Clean and apply modifiers"
+    bl_description = "Removes all simulation systems, removes non-render modifiers, and applies remaining modifiers"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        return cleanAndApplyModifiers(self, context)
+
 class OBJECT_OT_ToggleShadowCatcher(bpy.types.Operator):
     """Toggle Shadow Catcher"""
     bl_idname = "object.toggle_shadow_catcher"
@@ -1229,6 +1293,7 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.toggle_shadow_catcher")
         box.operator("object.remove_empty_vertex_groups")
         box.operator("object.remove_all_modifiers")
+        box.operator("object.clean_and_apply_modifiers")
         box.operator("object.update_common_mesh")
 
         box = layout.box()
@@ -1680,6 +1745,7 @@ def register():
     bpy.utils.register_class(OBJECT_OT_CopyObjectPropertyValues)
     bpy.utils.register_class(OBJECT_OT_CopyObjectMaterials)
     bpy.utils.register_class(OBJECT_OT_MakeAllPropertiesOverridable)
+    bpy.utils.register_class(OBJECT_OT_CleanAndApplyModifiers)
     bpy.utils.register_class(OBJECT_OT_ToggleShadowCatcher)
     bpy.utils.register_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.register_class(OBJECT_OT_RemoveAllModifiers)
@@ -1732,6 +1798,7 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectPropertyValues)
     bpy.utils.unregister_class(OBJECT_OT_CopyObjectMaterials)
     bpy.utils.unregister_class(OBJECT_OT_MakeAllPropertiesOverridable)
+    bpy.utils.unregister_class(OBJECT_OT_CleanAndApplyModifiers)
     bpy.utils.unregister_class(OBJECT_OT_ToggleShadowCatcher)
     bpy.utils.unregister_class(OBJECT_OT_RemoveEmptyVertexGroups)
     bpy.utils.unregister_class(OBJECT_OT_RemoveAllModifiers)
