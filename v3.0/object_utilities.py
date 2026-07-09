@@ -1370,6 +1370,23 @@ class SCENE_PT_render_utilities(bpy.types.Panel):
         layout.operator("scene.toggle_renderers")
         layout.operator("scene.pause_render")
 
+        box = layout.box()
+        box.label(text="Camera exposure", icon='CAMERA_DATA')
+        props = context.scene.camera_exposure
+        box.prop(props, "preset")
+        box.separator()
+        box.prop(props, "iso")
+        box.prop(props, "aperture")
+        box.prop(props, "shutter_speed")
+        box.separator()
+        box.prop(props, "exposure_offset")
+        box.prop(props, "sky_compensation")
+        if _has_sky_texture(context):
+            row = box.row()
+            row.label(text="Sky detected", icon='LIGHT_SUN')
+            row.label(text=f"+{props.sky_compensation:.1f} stops")
+        box.operator("scene.apply_camera_exposure")
+
 # -----------------------------------------------------------------------------
 # Sun position calculator
 
@@ -1613,6 +1630,177 @@ class SunCalculatorProperties(bpy.types.PropertyGroup):
     )
 
 
+# -----------------------------------------------------------------------------
+# Camera exposure properties
+
+_ISO_ITEMS = [
+    ("50", "50", ""),
+    ("100", "100", ""),
+    ("200", "200", ""),
+    ("400", "400", ""),
+    ("800", "800", ""),
+    ("1600", "1600", ""),
+    ("3200", "3200", ""),
+    ("6400", "6400", ""),
+    ("12800", "12800", ""),
+]
+
+_APERTURE_ITEMS = [
+    ("1.4", "1.4", ""),
+    ("2", "2", ""),
+    ("2.8", "2.8", ""),
+    ("4", "4", ""),
+    ("5.6", "5.6", ""),
+    ("8", "8", ""),
+    ("11", "11", ""),
+    ("16", "16", ""),
+    ("22", "22", ""),
+]
+
+_SHUTTER_ITEMS = [
+    ("0.00025", "1/4000", ""),
+    ("0.0005", "1/2000", ""),
+    ("0.001", "1/1000", ""),
+    ("0.002", "1/500", ""),
+    ("0.004", "1/250", ""),
+    ("0.008", "1/125", ""),
+    ("0.0167", "1/60", ""),
+    ("0.0333", "1/30", ""),
+    ("0.0667", "1/15", ""),
+    ("0.125", "1/8", ""),
+    ("0.25", "1/4", ""),
+    ("0.5", "1/2", ""),
+    ("1", "1\"", ""),
+]
+
+
+def _apply_preset(self, context):
+    if self.preset == 'SUN':
+        self.iso = "100"
+        self.aperture = "16"
+        self.shutter_speed = "0.008"
+    elif self.preset == 'INDOOR':
+        self.iso = "800"
+        self.aperture = "2.8"
+        self.shutter_speed = "0.0167"
+    elif self.preset == 'NIGHT':
+        self.iso = "3200"
+        self.aperture = "1.4"
+        self.shutter_speed = "0.0333"
+    self.preset = 'NONE'
+
+_PRESET_ITEMS = [
+    ("NONE", "Presets...", ""),
+    ("SUN", "Midday sun (Sunny 16)", "ISO 100, f/16, 1/125"),
+    ("INDOOR", "Indoor 100W", "ISO 800, f/2.8, 1/60"),
+    ("NIGHT", "Night", "ISO 3200, f/1.4, 1/30"),
+]
+
+
+class CameraExposureProperties(bpy.types.PropertyGroup):
+    preset: bpy.props.EnumProperty(
+        name="Preset",
+        description="Load predefined ISO/aperture/shutter settings",
+        items=_PRESET_ITEMS,
+        default="NONE",
+        update=_apply_preset,
+    )
+    iso: bpy.props.EnumProperty(
+        name="ISO",
+        description="ISO sensitivity (film speed)",
+        items=_ISO_ITEMS,
+        default="100",
+    )
+    aperture: bpy.props.EnumProperty(
+        name="Aperture",
+        description="Aperture f-stop",
+        items=_APERTURE_ITEMS,
+        default="2.8",
+    )
+    shutter_speed: bpy.props.EnumProperty(
+        name="Shutter speed",
+        description="Shutter speed",
+        items=_SHUTTER_ITEMS,
+        default="0.008",
+    )
+    exposure_offset: bpy.props.FloatProperty(
+        name="Offset",
+        description="Exposure offset in stops to calibrate for scene lighting",
+        default=-8.0,
+        step=10,
+        precision=1,
+    )
+    sky_compensation: bpy.props.FloatProperty(
+        name="Sky boost",
+        description="Extra stops added automatically when a sky texture is detected in the world",
+        default=4.0,
+        step=10,
+        precision=1,
+    )
+
+
+def _has_sky_texture(context):
+    world = context.scene.world
+    if world is None or not world.use_nodes or world.node_tree is None:
+        return False
+    for node in world.node_tree.nodes:
+        if node.type in ('SKY', 'TEX_SKY'):
+            return True
+    return False
+
+
+class SCENE_OT_ApplyCameraExposure(bpy.types.Operator):
+    bl_idname = "scene.apply_camera_exposure"
+    bl_label = "Apply"
+    bl_description = "Apply ISO, aperture and shutter speed to scene camera and color management"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene is not None
+
+    def _find_viewport_camera(self, context):
+        for screen in bpy.data.screens:
+            for area in screen.areas:
+                if area.type == 'VIEW_3D':
+                    for space in area.spaces:
+                        if space.type == 'VIEW_3D' and space.region_3d.view_perspective == 'CAMERA':
+                            cam = space.camera
+                            if cam and cam.type == 'CAMERA':
+                                return cam
+        cam = context.scene.camera
+        return cam if cam and cam.type == 'CAMERA' else None
+
+    def execute(self, context):
+        props = context.scene.camera_exposure
+        iso = float(props.iso)
+        ap = float(props.aperture)
+        shutter_sec = float(props.shutter_speed)
+
+        effective_offset = props.exposure_offset
+        has_sky = _has_sky_texture(context)
+        if has_sky:
+            effective_offset += props.sky_compensation
+
+        exposure = (
+            math.log2(iso / 100.0) +
+            math.log2(shutter_sec / 0.01) -
+            2.0 * math.log2(ap / 16.0) +
+            effective_offset
+        )
+
+        context.scene.view_settings.exposure = exposure
+
+        fps = context.scene.render.fps / context.scene.render.fps_base
+        context.scene.render.motion_blur_shutter = shutter_sec * fps
+
+        cam = self._find_viewport_camera(context)
+        if cam:
+            cam.data.dof.aperture_fstop = ap
+
+        return {'FINISHED'}
+
+
 class SCENE_OT_CalculateSunPosition(bpy.types.Operator):
     bl_idname = "scene.calculate_sun_position"
     bl_label = "Calculate"
@@ -1771,8 +1959,11 @@ def register():
 
     bpy.utils.register_class(SunCalculatorProperties)
     bpy.types.Scene.sun_calculator = bpy.props.PointerProperty(type=SunCalculatorProperties)
+    bpy.utils.register_class(CameraExposureProperties)
+    bpy.types.Scene.camera_exposure = bpy.props.PointerProperty(type=CameraExposureProperties)
     bpy.utils.register_class(SCENE_OT_CalculateSunPosition)
     bpy.utils.register_class(SCENE_OT_ApplySunToSky)
+    bpy.utils.register_class(SCENE_OT_ApplyCameraExposure)
 
     bpy.utils.register_class(OBJECT_PT_object_utilities)
     bpy.utils.register_class(OBJECT_PT_misc_utilities)
@@ -1824,8 +2015,11 @@ def unregister():
 
     bpy.utils.unregister_class(SCENE_OT_CalculateSunPosition)
     bpy.utils.unregister_class(SCENE_OT_ApplySunToSky)
+    bpy.utils.unregister_class(SCENE_OT_ApplyCameraExposure)
     del bpy.types.Scene.sun_calculator
     bpy.utils.unregister_class(SunCalculatorProperties)
+    del bpy.types.Scene.camera_exposure
+    bpy.utils.unregister_class(CameraExposureProperties)
 
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
     bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
