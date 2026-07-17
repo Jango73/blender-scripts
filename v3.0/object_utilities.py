@@ -19,7 +19,7 @@
 bl_info = {
     "name": "Object utilities",
     "author": "Jango73",
-    "version": (3, 4),
+    "version": (3, 5),
     "blender": (3, 0, 0),
     "description": "Operations on objects",
     "category": "Object",
@@ -732,6 +732,39 @@ def pasteModifierParams(self, context):
 
 # -----------------------------------------------------------------------------
 
+def replaceObjectInModifiers(self, context):
+    props = context.scene.modifier_replacement
+    source_obj = props.source_object
+    target_obj = props.target_object
+
+    if source_obj is None:
+        self.report({'ERROR'}, "Source object is required")
+        return {'CANCELLED'}
+
+    if target_obj is None:
+        self.report({'ERROR'}, "Target object is required")
+        return {'CANCELLED'}
+
+    source_name = source_obj.name
+
+    count = 0
+    for obj in bpy.data.objects:
+        for mod in obj.modifiers:
+            for prop in mod.bl_rna.properties:
+                if prop.type == 'POINTER':
+                    try:
+                        val = getattr(mod, prop.identifier)
+                        if isinstance(val, bpy.types.Object) and val.name == source_name:
+                            setattr(mod, prop.identifier, target_obj)
+                            count += 1
+                    except:
+                        pass
+
+    self.report({'INFO'}, f"Replaced {count} reference(s)")
+    return {'FINISHED'}
+
+# -----------------------------------------------------------------------------
+
 def removeKeyframesByChannel(self, context, channel):
     for obj in context.selected_objects:
 
@@ -1225,6 +1258,16 @@ class OBJECT_OT_CleanUpMaterialsAndImages(bpy.types.Operator):
     def execute(self, context):
         return cleanUpMaterialsAndImages(context)
 
+class OBJECT_OT_ReplaceObjectInModifiers(bpy.types.Operator):
+    """Replace object references in modifiers"""
+    bl_idname = "object.replace_object_in_modifiers"
+    bl_label = "Replace"
+    bl_description = "Replaces all references to the source object with the target object in all modifiers of all scene objects"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        return replaceObjectInModifiers(self, context)
+
 class OBJECT_OT_RotateFaceVertexIndices(bpy.types.Operator):
     """Rotate selected faces' vertex indices"""
     bl_idname = "object.rotate_face_vertex_indices"
@@ -1316,6 +1359,27 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.remove_euler_rotation_keyframes")
         box.operator("object.remove_quat_rotation_keyframes")
         box.operator("object.remove_scale_keyframes")
+
+class OBJECT_PT_replacement(bpy.types.Panel):
+    bl_label = "Replacement"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Edit"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.modifier_replacement
+
+        box = layout.box()
+        box.prop(props, "source_object", text="Source")
+        box.prop(props, "target_object", text="Target")
+        box.separator()
+        box.operator("object.replace_object_in_modifiers", text="Replace")
 
 class OBJECT_PT_misc_utilities(bpy.types.Panel):
     bl_idname = "OBJECT_PT_misc_utilities"
@@ -1739,6 +1803,19 @@ class CameraExposureProperties(bpy.types.PropertyGroup):
     )
 
 
+class ModifierReplacementProperties(bpy.types.PropertyGroup):
+    source_object: bpy.props.PointerProperty(
+        name="Source",
+        description="Object to replace",
+        type=bpy.types.Object,
+    )
+    target_object: bpy.props.PointerProperty(
+        name="Target",
+        description="Replacement object",
+        type=bpy.types.Object,
+    )
+
+
 def _has_sky_texture(context):
     world = context.scene.world
     if world is None or not world.use_nodes or world.node_tree is None:
@@ -1953,6 +2030,7 @@ def register():
 
     bpy.utils.register_class(OBJECT_OT_SelectMergeByDistance)
     bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
+    bpy.utils.register_class(OBJECT_OT_ReplaceObjectInModifiers)
 #    bpy.utils.register_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(SCENE_OT_PauseRender)
@@ -1961,11 +2039,14 @@ def register():
     bpy.types.Scene.sun_calculator = bpy.props.PointerProperty(type=SunCalculatorProperties)
     bpy.utils.register_class(CameraExposureProperties)
     bpy.types.Scene.camera_exposure = bpy.props.PointerProperty(type=CameraExposureProperties)
+    bpy.utils.register_class(ModifierReplacementProperties)
+    bpy.types.Scene.modifier_replacement = bpy.props.PointerProperty(type=ModifierReplacementProperties)
     bpy.utils.register_class(SCENE_OT_CalculateSunPosition)
     bpy.utils.register_class(SCENE_OT_ApplySunToSky)
     bpy.utils.register_class(SCENE_OT_ApplyCameraExposure)
 
     bpy.utils.register_class(OBJECT_PT_object_utilities)
+    bpy.utils.register_class(OBJECT_PT_replacement)
     bpy.utils.register_class(OBJECT_PT_misc_utilities)
     bpy.utils.register_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.register_class(SCENE_PT_render_utilities)
@@ -2009,6 +2090,7 @@ def unregister():
 
     bpy.utils.unregister_class(OBJECT_OT_SelectMergeByDistance)
     bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
+    bpy.utils.unregister_class(OBJECT_OT_ReplaceObjectInModifiers)
 #    bpy.utils.unregister_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(SCENE_OT_PauseRender)
@@ -2016,12 +2098,15 @@ def unregister():
     bpy.utils.unregister_class(SCENE_OT_CalculateSunPosition)
     bpy.utils.unregister_class(SCENE_OT_ApplySunToSky)
     bpy.utils.unregister_class(SCENE_OT_ApplyCameraExposure)
+    del bpy.types.Scene.modifier_replacement
+    bpy.utils.unregister_class(ModifierReplacementProperties)
     del bpy.types.Scene.sun_calculator
     bpy.utils.unregister_class(SunCalculatorProperties)
     del bpy.types.Scene.camera_exposure
     bpy.utils.unregister_class(CameraExposureProperties)
 
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
+    bpy.utils.unregister_class(OBJECT_PT_replacement)
     bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
     bpy.utils.unregister_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.unregister_class(SCENE_PT_render_utilities)
