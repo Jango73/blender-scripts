@@ -30,6 +30,8 @@ import bmesh
 import math
 import re
 import copy
+import os
+import tempfile
 from datetime import datetime
 from mathutils.kdtree import KDTree
 
@@ -1303,6 +1305,43 @@ class SCENE_OT_PauseRender(bpy.types.Operator):
         context.scene.cycles.preview_pause =  not context.scene.cycles.preview_pause
         return {'FINISHED'}
 
+_MULTI_RELOAD_COUNT_PATH = os.path.join(tempfile.gettempdir(), ".blender_multi_reload_count")
+
+@bpy.app.handlers.persistent
+def _on_load_multi_reload(scene):
+    path = _MULTI_RELOAD_COUNT_PATH
+    if not os.path.exists(path):
+        return
+    with open(path, 'r') as f:
+        try:
+            remaining = int(f.read().strip())
+        except ValueError:
+            remaining = 0
+    if remaining > 0:
+        remaining -= 1
+        with open(path, 'w') as f:
+            f.write(str(remaining))
+        bpy.ops.wm.open_mainfile('EXEC_DEFAULT', filepath=bpy.data.filepath)
+    else:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+class SCENE_OT_MultiReload(bpy.types.Operator):
+    """Save and reload the current file 4 times"""
+    bl_idname = "scene.multi_reload"
+    bl_label = "Multi Reload"
+    bl_description = "Save and reload the current file 4 times"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        with open(_MULTI_RELOAD_COUNT_PATH, 'w') as f:
+            f.write("3")
+        bpy.ops.wm.save_mainfile('EXEC_DEFAULT')
+        bpy.ops.wm.open_mainfile('EXEC_DEFAULT', filepath=bpy.data.filepath)
+        return {'FINISHED'}
+
 # -----------------------------------------------------------------------------
 # Panels
 
@@ -1397,6 +1436,9 @@ class OBJECT_PT_general_utilities(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.operator("object.clean_up_materials_and_images")
+        row = layout.row()
+        row.alert = True
+        row.operator("scene.multi_reload")
 
 class OBJECT_PT_object_edit_utilities(bpy.types.Panel):
     bl_idname = "OBJECT_PT_object_edit_utilities"
@@ -2034,6 +2076,8 @@ def register():
 #    bpy.utils.register_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(SCENE_OT_PauseRender)
+    bpy.utils.register_class(SCENE_OT_MultiReload)
+    bpy.app.handlers.load_post.append(_on_load_multi_reload)
 
     bpy.utils.register_class(SunCalculatorProperties)
     bpy.types.Scene.sun_calculator = bpy.props.PointerProperty(type=SunCalculatorProperties)
@@ -2094,6 +2138,8 @@ def unregister():
 #    bpy.utils.unregister_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(SCENE_OT_PauseRender)
+    bpy.utils.unregister_class(SCENE_OT_MultiReload)
+    bpy.app.handlers.load_post.remove(_on_load_multi_reload)
 
     bpy.utils.unregister_class(SCENE_OT_CalculateSunPosition)
     bpy.utils.unregister_class(SCENE_OT_ApplySunToSky)
