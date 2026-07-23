@@ -1381,9 +1381,9 @@ class OBJECT_PT_replacement(bpy.types.Panel):
         box.separator()
         box.operator("object.replace_object_in_modifiers", text="Replace")
 
-class OBJECT_PT_misc_utilities(bpy.types.Panel):
-    bl_idname = "OBJECT_PT_misc_utilities"
-    bl_label = "Misc utilities"
+class OBJECT_PT_general_utilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_general_utilities"
+    bl_label = "General utilities"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Edit"
@@ -1933,9 +1933,9 @@ class SCENE_OT_ApplySunToSky(bpy.types.Operator):
 # -----------------------------------------------------------------------------
 # Panels
 
-class SCENE_PT_general_utilities(bpy.types.Panel):
-    bl_idname = "SCENE_PT_general_utilities"
-    bl_label = "General utilities"
+class SCENE_PT_sky_utilities(bpy.types.Panel):
+    bl_idname = "SCENE_PT_sky_utilities"
+    bl_label = "Sky utilities"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Edit"
@@ -2047,10 +2047,10 @@ def register():
 
     bpy.utils.register_class(OBJECT_PT_object_utilities)
     bpy.utils.register_class(OBJECT_PT_replacement)
-    bpy.utils.register_class(OBJECT_PT_misc_utilities)
+    bpy.utils.register_class(OBJECT_PT_general_utilities)
     bpy.utils.register_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.register_class(SCENE_PT_render_utilities)
-    bpy.utils.register_class(SCENE_PT_general_utilities)
+    bpy.utils.register_class(SCENE_PT_sky_utilities)
 
     # handle the keymap
     wm = bpy.context.window_manager
@@ -2107,10 +2107,10 @@ def unregister():
 
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
     bpy.utils.unregister_class(OBJECT_PT_replacement)
-    bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
+    bpy.utils.unregister_class(OBJECT_PT_general_utilities)
     bpy.utils.unregister_class(OBJECT_PT_object_edit_utilities)
     bpy.utils.unregister_class(SCENE_PT_render_utilities)
-    bpy.utils.unregister_class(SCENE_PT_general_utilities)
+    bpy.utils.unregister_class(SCENE_PT_sky_utilities)
 
 if __name__ == "__main__":
     register()

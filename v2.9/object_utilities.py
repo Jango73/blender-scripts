@@ -500,9 +500,9 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.remove_quat_rotation_keyframes")
         box.operator("object.remove_scale_keyframes")
 
-class OBJECT_PT_misc_utilities(bpy.types.Panel):
-    bl_idname = "OBJECT_PT_misc_utilities"
-    bl_label = "Misc utilities"
+class OBJECT_PT_general_utilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_general_utilities"
+    bl_label = "General utilities"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Edit"
@@ -550,7 +550,7 @@ def register():
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(SCENE_OT_PauseRender)
     bpy.utils.register_class(OBJECT_PT_object_utilities)
-    bpy.utils.register_class(OBJECT_PT_misc_utilities)
+    bpy.utils.register_class(OBJECT_PT_general_utilities)
     bpy.utils.register_class(SCENE_PT_render_utilities)
 
     # handle the keymap
@@ -578,7 +578,7 @@ def unregister():
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(SCENE_OT_PauseRender)
     bpy.utils.unregister_class(OBJECT_PT_object_utilities)
-    bpy.utils.unregister_class(OBJECT_PT_misc_utilities)
+    bpy.utils.unregister_class(OBJECT_PT_general_utilities)
     bpy.utils.unregister_class(SCENE_PT_render_utilities)
 
 if __name__ == "__main__":
