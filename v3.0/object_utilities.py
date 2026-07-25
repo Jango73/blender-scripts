@@ -1357,8 +1357,8 @@ class SCENE_OT_MultiReload(bpy.types.Operator):
 # -----------------------------------------------------------------------------
 # Panels
 
-class OBJECT_PT_object_utilities(bpy.types.Panel):
-    bl_idname = "OBJECT_PT_object_utilities"
+class OBJECT_PT_ObjectUtilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_ObjectUtilities"
     bl_label = "Object utilities"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -1411,7 +1411,7 @@ class OBJECT_PT_object_utilities(bpy.types.Panel):
         box.operator("object.remove_quat_rotation_keyframes")
         box.operator("object.remove_scale_keyframes")
 
-class OBJECT_PT_replacement(bpy.types.Panel):
+class OBJECT_PT_Replacement(bpy.types.Panel):
     bl_label = "Replacement"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -1432,8 +1432,8 @@ class OBJECT_PT_replacement(bpy.types.Panel):
         box.separator()
         box.operator("object.replace_object_in_modifiers", text="Replace")
 
-class OBJECT_PT_general_utilities(bpy.types.Panel):
-    bl_idname = "OBJECT_PT_general_utilities"
+class OBJECT_PT_GeneralUtilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_GeneralUtilities"
     bl_label = "General utilities"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -1452,8 +1452,8 @@ class OBJECT_PT_general_utilities(bpy.types.Panel):
         row.alert = True
         row.operator("scene.multi_reload")
 
-class OBJECT_PT_object_edit_utilities(bpy.types.Panel):
-    bl_idname = "OBJECT_PT_object_edit_utilities"
+class OBJECT_PT_ObjectEditUtilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_ObjectEditUtilities"
     bl_label = "Object edit utilities"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -2101,10 +2101,10 @@ def register():
     bpy.utils.register_class(SCENE_OT_ApplySunToSky)
     bpy.utils.register_class(SCENE_OT_ApplyCameraExposure)
 
-    bpy.utils.register_class(OBJECT_PT_object_utilities)
-    bpy.utils.register_class(OBJECT_PT_replacement)
-    bpy.utils.register_class(OBJECT_PT_general_utilities)
-    bpy.utils.register_class(OBJECT_PT_object_edit_utilities)
+    bpy.utils.register_class(OBJECT_PT_ObjectUtilities)
+    bpy.utils.register_class(OBJECT_PT_Replacement)
+    bpy.utils.register_class(OBJECT_PT_GeneralUtilities)
+    bpy.utils.register_class(OBJECT_PT_ObjectEditUtilities)
     bpy.utils.register_class(SCENE_PT_render_utilities)
     bpy.utils.register_class(SCENE_PT_sky_utilities)
 
@@ -2163,10 +2163,10 @@ def unregister():
     del bpy.types.Scene.camera_exposure
     bpy.utils.unregister_class(CameraExposureProperties)
 
-    bpy.utils.unregister_class(OBJECT_PT_object_utilities)
-    bpy.utils.unregister_class(OBJECT_PT_replacement)
-    bpy.utils.unregister_class(OBJECT_PT_general_utilities)
-    bpy.utils.unregister_class(OBJECT_PT_object_edit_utilities)
+    bpy.utils.unregister_class(OBJECT_PT_ObjectUtilities)
+    bpy.utils.unregister_class(OBJECT_PT_Replacement)
+    bpy.utils.unregister_class(OBJECT_PT_GeneralUtilities)
+    bpy.utils.unregister_class(OBJECT_PT_ObjectEditUtilities)
     bpy.utils.unregister_class(SCENE_PT_render_utilities)
     bpy.utils.unregister_class(SCENE_PT_sky_utilities)
 
