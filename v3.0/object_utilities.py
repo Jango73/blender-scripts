@@ -1122,6 +1122,18 @@ class OBJECT_OT_UpdateCommonMesh(bpy.types.Operator):
     bl_description = "Updates the common mesh based on vertex group 'Common'"
     bl_options = {'REGISTER'}
 
+    @classmethod
+    def poll(cls, context):
+        source = context.active_object
+        if source is None or source.type != 'MESH':
+            return False
+        if len(context.selected_objects) < 2:
+            return False
+        target = context.selected_objects[0] if context.selected_objects[0] != source else context.selected_objects[1]
+        if target is None or target.type != 'MESH':
+            return False
+        return source.vertex_groups.get("Common") is not None
+
     def execute(self, context):
         return updateCommonMesh(self, context)
 
