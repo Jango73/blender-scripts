@@ -1948,7 +1948,6 @@ class SCENE_OT_CalculateSunPosition(bpy.types.Operator):
             )
             props.elevation = round(elevation, 4)
             props.azimuth = round(azimuth, 4)
-            self.report({'INFO'}, f"Azimuth: {azimuth:.2f}°  Elevation: {elevation:.2f}°")
         except Exception as e:
             self.report({'ERROR'}, f"Invalid date/time: {str(e)}")
             return {'CANCELLED'}
@@ -1957,7 +1956,7 @@ class SCENE_OT_CalculateSunPosition(bpy.types.Operator):
 
 class SCENE_OT_ApplySunToSky(bpy.types.Operator):
     bl_idname = "scene.apply_sun_to_sky"
-    bl_label = "Use \u2192 Sky Texture"
+    bl_label = "Apply"
     bl_description = "Transfer calculated azimuth and elevation to the Sky Texture in the World material"
     bl_options = {'REGISTER', 'UNDO'}
 
