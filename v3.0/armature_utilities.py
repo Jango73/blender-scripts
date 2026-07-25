@@ -26,6 +26,7 @@ bl_info = {
 }
 
 import bpy
+import math
 import mathutils
 from bpy.types import Operator
 from bpy.props import StringProperty
@@ -92,6 +93,21 @@ class OBJECT_OT_CopyArmatureConstraints(bpy.types.Operator):
 
     def execute(self, context):
         return copyArmatureConstraints(self, context)
+
+class OBJECT_OT_FixLeg01(bpy.types.Operator):
+    """Fix Leg_01"""
+    bl_idname = "object.fix_leg_01"
+    bl_label = "Fix Leg_01"
+    bl_description = "Compensates Left_Leg_01/Right_Leg_01 pose rotation for roll change from 106° to 86°"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        armature = context.active_object
+        return armature is not None and armature.type == 'ARMATURE'
+
+    def execute(self, context):
+        return fixLeg01(self, context)
 
 # -------------------------------------------------------------------------------------------------
 # Save start pose and delta pose
@@ -659,6 +675,43 @@ class POSE_OT_ScaleEachBoneApply(Operator):
         return {'FINISHED'}
 
 # -------------------------------------------------------------------------------------------------
+# Fix Leg_01 roll compensation
+
+def fixLeg01(self, context):
+    armature = context.active_object
+    if armature is None or armature.type != 'ARMATURE':
+        self.report({'WARNING'}, "No active armature")
+        return {'CANCELLED'}
+
+    fixes = [
+        ("Left_Leg_01", math.radians(106), math.radians(86)),
+        ("Right_Leg_01", math.radians(-106), math.radians(-86)),
+    ]
+
+    for bone_name, roll_old, roll_new in fixes:
+        pb = armature.pose.bones.get(bone_name)
+        if pb is None:
+            continue
+
+        delta = roll_old - roll_new          # +20° pour la jambe gauche
+        half = delta * 0.5
+        q_delta = mathutils.Quaternion((math.cos(half), 0.0, math.sin(half), 0.0))
+
+        if pb.rotation_mode == 'QUATERNION':
+            # conjugaison : Q_new = QΔ · Q_old · QΔ⁻¹
+            pb.rotation_quaternion = q_delta @ pb.rotation_quaternion @ q_delta.inverted()
+        elif pb.rotation_mode == 'AXIS_ANGLE':
+            q = mathutils.Quaternion(pb.rotation_axis_angle[1:], pb.rotation_axis_angle[0])
+            q = q_delta @ q @ q_delta.inverted()
+            pb.rotation_axis_angle = (q.angle, *q.axis)
+        else:  # Euler
+            q = pb.rotation_euler.to_quaternion()
+            q = q_delta @ q @ q_delta.inverted()
+            pb.rotation_euler = q.to_euler(pb.rotation_mode)
+
+    return {'FINISHED'}
+
+# -------------------------------------------------------------------------------------------------
 # Panels
 
 class OBJECT_PT_armature_utilities(bpy.types.Panel):
@@ -768,6 +821,19 @@ class OBJECT_PT_bone_utilities(bpy.types.Panel):
         row.prop(context.scene, "bone_individual_scale")
         row.operator(POSE_OT_ScaleEachBoneApply.bl_idname, text="Apply")
 
+class OBJECT_PT_temp_utilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_temp_utilities"
+    bl_label = "Temp armature utilities"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Edit"
+    bl_context = 'objectmode'
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("object.fix_leg_01")
+
 # -------------------------------------------------------------------------------------------------
 # Registering
 
@@ -775,12 +841,14 @@ addon_keymaps = []
 
 def register():
     bpy.utils.register_class(OBJECT_OT_CopyArmatureConstraints)
+    bpy.utils.register_class(OBJECT_OT_FixLeg01)
     bpy.utils.register_class(OBJECT_OT_CopyBonePositionsRotations)
     bpy.utils.register_class(OBJECT_OT_PasteBonePositionsRotations)
     bpy.utils.register_class(OBJECT_OT_CopyBoneAnimationAllFrames)
     bpy.utils.register_class(OBJECT_OT_PasteBoneAnimationAllFrames)
     bpy.utils.register_class(OBJECT_PT_armature_utilities)
     bpy.utils.register_class(OBJECT_PT_bone_utilities)
+    bpy.utils.register_class(OBJECT_PT_temp_utilities)
     bpy.utils.register_class(POSE_OT_MarkStartPose)
     bpy.utils.register_class(POSE_OT_CopyDelta)
     bpy.utils.register_class(POSE_OT_PasteDelta)
@@ -802,12 +870,14 @@ def unregister():
     addon_keymaps.clear()
 
     bpy.utils.unregister_class(OBJECT_OT_CopyArmatureConstraints)
+    bpy.utils.unregister_class(OBJECT_OT_FixLeg01)
     bpy.utils.unregister_class(OBJECT_OT_CopyBonePositionsRotations)
     bpy.utils.unregister_class(OBJECT_OT_PasteBonePositionsRotations)
     bpy.utils.unregister_class(OBJECT_OT_CopyBoneAnimationAllFrames)
     bpy.utils.unregister_class(OBJECT_OT_PasteBoneAnimationAllFrames)
     bpy.utils.unregister_class(OBJECT_PT_armature_utilities)
     bpy.utils.unregister_class(OBJECT_PT_bone_utilities)
+    bpy.utils.unregister_class(OBJECT_PT_temp_utilities)
     bpy.utils.unregister_class(POSE_OT_MarkStartPose)
     bpy.utils.unregister_class(POSE_OT_CopyDelta)
     bpy.utils.unregister_class(POSE_OT_PasteDelta)
