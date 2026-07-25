@@ -714,8 +714,8 @@ def fixLeg01(self, context):
 # -------------------------------------------------------------------------------------------------
 # Panels
 
-class OBJECT_PT_armature_utilities(bpy.types.Panel):
-    bl_idname = "OBJECT_PT_armature_utilities"
+class OBJECT_PT_ArmatureUtilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_ArmatureUtilities"
     bl_label = "Armature Utilities"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -792,8 +792,8 @@ class OBJECT_OT_PasteBoneAnimationAllFrames(bpy.types.Operator):
     def execute(self, context):
         return pasteBoneAnimationAllFrames(self, context)
 
-class OBJECT_PT_bone_utilities(bpy.types.Panel):
-    bl_idname = "OBJECT_PT_bone_utilities"
+class OBJECT_PT_BoneUtilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_BoneUtilities"
     bl_label = "Bone Utilities"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -821,8 +821,8 @@ class OBJECT_PT_bone_utilities(bpy.types.Panel):
         row.prop(context.scene, "bone_individual_scale")
         row.operator(POSE_OT_ScaleEachBoneApply.bl_idname, text="Apply")
 
-class OBJECT_PT_temp_utilities(bpy.types.Panel):
-    bl_idname = "OBJECT_PT_temp_utilities"
+class OBJECT_PT_TempUtilities(bpy.types.Panel):
+    bl_idname = "OBJECT_PT_TempUtilities"
     bl_label = "Temp armature utilities"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -846,9 +846,9 @@ def register():
     bpy.utils.register_class(OBJECT_OT_PasteBonePositionsRotations)
     bpy.utils.register_class(OBJECT_OT_CopyBoneAnimationAllFrames)
     bpy.utils.register_class(OBJECT_OT_PasteBoneAnimationAllFrames)
-    bpy.utils.register_class(OBJECT_PT_armature_utilities)
-    bpy.utils.register_class(OBJECT_PT_bone_utilities)
-    bpy.utils.register_class(OBJECT_PT_temp_utilities)
+    bpy.utils.register_class(OBJECT_PT_ArmatureUtilities)
+    bpy.utils.register_class(OBJECT_PT_BoneUtilities)
+    bpy.utils.register_class(OBJECT_PT_TempUtilities)
     bpy.utils.register_class(POSE_OT_MarkStartPose)
     bpy.utils.register_class(POSE_OT_CopyDelta)
     bpy.utils.register_class(POSE_OT_PasteDelta)
@@ -875,9 +875,9 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_PasteBonePositionsRotations)
     bpy.utils.unregister_class(OBJECT_OT_CopyBoneAnimationAllFrames)
     bpy.utils.unregister_class(OBJECT_OT_PasteBoneAnimationAllFrames)
-    bpy.utils.unregister_class(OBJECT_PT_armature_utilities)
-    bpy.utils.unregister_class(OBJECT_PT_bone_utilities)
-    bpy.utils.unregister_class(OBJECT_PT_temp_utilities)
+    bpy.utils.unregister_class(OBJECT_PT_ArmatureUtilities)
+    bpy.utils.unregister_class(OBJECT_PT_BoneUtilities)
+    bpy.utils.unregister_class(OBJECT_PT_TempUtilities)
     bpy.utils.unregister_class(POSE_OT_MarkStartPose)
     bpy.utils.unregister_class(POSE_OT_CopyDelta)
     bpy.utils.unregister_class(POSE_OT_PasteDelta)
