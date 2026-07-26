@@ -1438,7 +1438,6 @@ class OBJECT_PT_GeneralUtilities(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Edit"
-    bl_context = 'objectmode'
     bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
@@ -1920,14 +1919,27 @@ class SCENE_OT_ApplyCameraExposure(bpy.types.Operator):
             effective_offset
         )
 
-        context.scene.view_settings.exposure = exposure
-
         fps = context.scene.render.fps / context.scene.render.fps_base
-        context.scene.render.motion_blur_shutter = shutter_sec * fps
 
         cam = self._find_viewport_camera(context)
+
+        shading_states = []
+        for screen in bpy.data.screens:
+            for area in screen.areas:
+                if area.type == 'VIEW_3D':
+                    for space in area.spaces:
+                        if space.type == 'VIEW_3D':
+                            shading_states.append((space, space.shading.type))
+                            if space.shading.type == 'RENDERED':
+                                space.shading.type = 'SOLID'
+
+        context.scene.view_settings.exposure = exposure
+        context.scene.render.motion_blur_shutter = shutter_sec * fps
         if cam:
             cam.data.dof.aperture_fstop = ap
+
+        for space, stype in shading_states:
+            space.shading.type = stype
 
         return {'FINISHED'}
 
