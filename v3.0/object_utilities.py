@@ -1488,6 +1488,11 @@ class SCENE_PT_render_utilities(bpy.types.Panel):
         layout.operator("scene.pause_render")
 
         box = layout.box()
+        box.label(text="Render resolution", icon='MOD_SOLIDIFY')
+        box.prop(context.scene.render_resolution, "resolution")
+        box.separator()
+
+        box = layout.box()
         box.label(text="Camera exposure", icon='CAMERA_DATA')
         props = context.scene.camera_exposure
         box.prop(props, "preset")
@@ -1790,6 +1795,32 @@ _SHUTTER_ITEMS = [
     ("1", "1\"", ""),
 ]
 
+_RESOLUTION_ITEMS = [
+    ("NONE", "None", ""),
+    ("P169_2048", "Portrait 16/9  2048", ""),
+    ("L169_2048", "Landscape 16/9  2048", ""),
+    ("P169_4096", "Portrait 16/9  4096", ""),
+    ("L169_4096", "Landscape 16/9  4096", ""),
+    ("P1610_4096", "Portrait 16/10  4096", ""),
+    ("L1610_4096", "Landscape 16/10  4096", ""),
+]
+
+_RESOLUTION_SIZES = {
+    "P169_2048": (1152, 2048),
+    "L169_2048": (2048, 1152),
+    "P169_4096": (2304, 4096),
+    "L169_4096": (4096, 2304),
+    "P1610_4096": (2560, 4096),
+    "L1610_4096": (4096, 2560),
+}
+
+
+def _apply_resolution(self, context):
+    size = _RESOLUTION_SIZES.get(self.resolution)
+    if size:
+        context.scene.render.resolution_x = size[0]
+        context.scene.render.resolution_y = size[1]
+
 
 def _apply_preset(self, context):
     if self.preset == 'SUN':
@@ -1812,6 +1843,16 @@ _PRESET_ITEMS = [
     ("INDOOR", "Indoor 100W", "ISO 800, f/2.8, 1/60"),
     ("NIGHT", "Night", "ISO 3200, f/1.4, 1/30"),
 ]
+
+
+class RenderResolutionProperties(bpy.types.PropertyGroup):
+    resolution: bpy.props.EnumProperty(
+        name="Resolution",
+        description="Set render resolution",
+        items=_RESOLUTION_ITEMS,
+        default="NONE",
+        update=_apply_resolution,
+    )
 
 
 class CameraExposureProperties(bpy.types.PropertyGroup):
@@ -2104,6 +2145,8 @@ def register():
 
     bpy.utils.register_class(SunCalculatorProperties)
     bpy.types.Scene.sun_calculator = bpy.props.PointerProperty(type=SunCalculatorProperties)
+    bpy.utils.register_class(RenderResolutionProperties)
+    bpy.types.Scene.render_resolution = bpy.props.PointerProperty(type=RenderResolutionProperties)
     bpy.utils.register_class(CameraExposureProperties)
     bpy.types.Scene.camera_exposure = bpy.props.PointerProperty(type=CameraExposureProperties)
     bpy.utils.register_class(ModifierReplacementProperties)
@@ -2173,6 +2216,8 @@ def unregister():
     bpy.utils.unregister_class(SunCalculatorProperties)
     del bpy.types.Scene.camera_exposure
     bpy.utils.unregister_class(CameraExposureProperties)
+    del bpy.types.Scene.render_resolution
+    bpy.utils.unregister_class(RenderResolutionProperties)
 
     bpy.utils.unregister_class(OBJECT_PT_ObjectUtilities)
     bpy.utils.unregister_class(OBJECT_PT_Replacement)
