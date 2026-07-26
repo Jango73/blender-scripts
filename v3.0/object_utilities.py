@@ -1550,8 +1550,6 @@ def compute_sun_position(lat, lon, year, month, day, hour, minute, utc_offset):
 
 
 def _sun_auto_calc(props, context):
-    if not props.auto_calc:
-        return
     try:
         elevation, azimuth = compute_sun_position(
             props.latitude, props.longitude,
@@ -1744,11 +1742,6 @@ class SunCalculatorProperties(bpy.types.PropertyGroup):
         name="Sun elevation",
         description="Calculated sun elevation in degrees",
         default=0.0,
-    )
-    auto_calc: bpy.props.BoolProperty(
-        name="Auto",
-        description="Automatically recalculate on input change",
-        default=True,
     )
 
 
@@ -1985,28 +1978,6 @@ class SCENE_OT_ApplyCameraExposure(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class SCENE_OT_CalculateSunPosition(bpy.types.Operator):
-    bl_idname = "scene.calculate_sun_position"
-    bl_label = "Calculate"
-    bl_description = "Calculate sun azimuth and elevation from coordinates and time"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        props = context.scene.sun_calculator
-        try:
-            elevation, azimuth = compute_sun_position(
-                props.latitude, props.longitude,
-                props.year, props.month, props.day,
-                props.hour, props.minute, props.utc_offset
-            )
-            props.elevation = round(elevation, 4)
-            props.azimuth = round(azimuth, 4)
-        except Exception as e:
-            self.report({'ERROR'}, f"Invalid date/time: {str(e)}")
-            return {'CANCELLED'}
-        return {'FINISHED'}
-
-
 class SCENE_OT_ApplySunToSky(bpy.types.Operator):
     bl_idname = "scene.apply_sun_to_sky"
     bl_label = "Apply"
@@ -2091,10 +2062,6 @@ class SCENE_PT_sky_utilities(bpy.types.Panel):
 
         box.separator()
 
-        row = box.row()
-        row.operator("scene.calculate_sun_position")
-        row.prop(props, "auto_calc")
-
         col = box.column()
         col.prop(props, "azimuth")
         col.prop(props, "elevation")
@@ -2151,7 +2118,6 @@ def register():
     bpy.types.Scene.camera_exposure = bpy.props.PointerProperty(type=CameraExposureProperties)
     bpy.utils.register_class(ModifierReplacementProperties)
     bpy.types.Scene.modifier_replacement = bpy.props.PointerProperty(type=ModifierReplacementProperties)
-    bpy.utils.register_class(SCENE_OT_CalculateSunPosition)
     bpy.utils.register_class(SCENE_OT_ApplySunToSky)
     bpy.utils.register_class(SCENE_OT_ApplyCameraExposure)
 
@@ -2207,7 +2173,6 @@ def unregister():
     bpy.utils.unregister_class(SCENE_OT_MultiReload)
     bpy.app.handlers.load_post.remove(_on_load_multi_reload)
 
-    bpy.utils.unregister_class(SCENE_OT_CalculateSunPosition)
     bpy.utils.unregister_class(SCENE_OT_ApplySunToSky)
     bpy.utils.unregister_class(SCENE_OT_ApplyCameraExposure)
     del bpy.types.Scene.modifier_replacement
