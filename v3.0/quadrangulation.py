@@ -126,6 +126,55 @@ class MeshUtils:
                 return False
         return True
 
+    @staticmethod
+    def _quad_convex_at(quad, v, co):
+        verts = list(quad.verts)
+        n = len(verts)
+        if n != 4:
+            return True
+        coords = [co if vt == v else vt.co for vt in verts]
+        nrm = (coords[1] - coords[0]).cross(coords[2] - coords[1])
+        if nrm.length_squared < 1e-12:
+            return False
+        for i in range(n):
+            v0 = coords[i]
+            v1 = coords[(i + 1) % n]
+            v2 = coords[(i + 2) % n]
+            cross = (v1 - v0).cross(v2 - v1)
+            if cross.dot(nrm) < -MeshUtils.EPSILON_NORMAL:
+                return False
+        return True
+
+    @staticmethod
+    def is_convex_robust(face):
+        verts = list(face.verts)
+        n = len(verts)
+        if n < 3:
+            return True
+        coords = [v.co for v in verts]
+        nrm = (coords[1] - coords[0]).cross(coords[2] - coords[1])
+        if nrm.length_squared < 1e-12:
+            return False
+        for i in range(n):
+            v0 = coords[i]
+            v1 = coords[(i + 1) % n]
+            v2 = coords[(i + 2) % n]
+            cross = (v1 - v0).cross(v2 - v1)
+            if cross.dot(nrm) < -MeshUtils.EPSILON_NORMAL:
+                return False
+        return True
+
+    @staticmethod
+    def _move_would_create_concave(v, new_co):
+        for nf in v.link_faces:
+            if not nf.is_valid or len(nf.verts) != 4:
+                continue
+            before = MeshUtils._quad_convex_at(nf, v, v.co)
+            after = MeshUtils._quad_convex_at(nf, v, new_co)
+            if before and not after:
+                return True
+        return False
+
     EPSILON_LENGTH = 1e-10
     EPSILON_NORMAL = 1e-6
 
@@ -170,7 +219,10 @@ class MeshUtils:
                         edge_dir = (n_x - p).normalized()
                         perp = edge_dir.cross(f.normal).normalized()
                         push = min(l1, l2) * push_factor
-                        v.co = v.co + perp * push
+                        new_co = v.co + perp * push
+                        if MeshUtils._move_would_create_concave(v, new_co):
+                            continue
+                        v.co = new_co
                         done = False
                         continue
 
@@ -179,7 +231,10 @@ class MeshUtils:
                         verts = list(f.verts)
                         n = len(verts)
                         centroid = sum((vt.co for vt in verts), Vector()) / n
-                        v.co = v.co.lerp(centroid, reflex_lerp)
+                        new_co = v.co.lerp(centroid, reflex_lerp)
+                        if MeshUtils._move_would_create_concave(v, new_co):
+                            continue
+                        v.co = new_co
                         done = False
             if done:
                 break
@@ -598,7 +653,7 @@ class TriangleSolver(BaseSolver):
                     'termination': 'poke'})]
 
         candidates.sort(key=lambda c: c.score, reverse=True)
-        return candidates[:1]
+        return candidates
 
 # -----------------------------------------------------------------------------
 # Pentagon Solver
@@ -634,7 +689,7 @@ class PentagonSolver(BaseSolver):
                 'quad_dev': quad_dev}))
 
         candidates.sort(key=lambda c: c.score, reverse=True)
-        return candidates[:1]
+        return candidates
 
 # -----------------------------------------------------------------------------
 # Hexagon Solver
@@ -674,8 +729,38 @@ class HexagonSolver(BaseSolver):
                 'solver': 'hexagon', 'pattern': offset,
                 'quads_deviation': predicted_dev}))
 
+        if not MeshUtils.is_convex_robust(face):
+            for i in range(3):
+                j = i + 3
+                quads = ([verts[(i + k) % 6] for k in range(4)],
+                         [verts[(j + k) % 6] for k in range(4)])
+                dev = 0.0
+                for quad in quads:
+                    for k in range(4):
+                        v0 = quad[k].co
+                        v1 = quad[(k + 1) % 4].co
+                        v2 = quad[(k + 2) % 4].co
+                        d1 = v1 - v0
+                        d2 = v2 - v1
+                        l1 = d1.length
+                        l2 = d2.length
+                        if l1 < MeshUtils.EPSILON_LENGTH or l2 < MeshUtils.EPSILON_LENGTH:
+                            continue
+                        dot = max(-1.0, min(1.0, d1.dot(d2) / (l1 * l2)))
+                        dev += abs(math.degrees(math.acos(dot)) - 90)
+                score = -weights.quad_perfection_weight * dev
+                if weights.short_edge_penalty_weight > 0.0:
+                    max_len = max(e.calc_length() for e in face.edges)
+                    if max_len > 0:
+                        cut_len = (verts[i].co - verts[j].co).length
+                        score -= weights.short_edge_penalty_weight * (1.0 - cut_len / max_len)
+                ops = [('diagonal_cut', face, verts[i], verts[j])]
+                candidates.append(SolutionCandidate(ops, score, {
+                    'solver': 'hexagon', 'pattern': 'diag_%d' % i,
+                    'quads_deviation': dev}))
+
         candidates.sort(key=lambda c: c.score, reverse=True)
-        return candidates[:1]
+        return candidates
 
 # -----------------------------------------------------------------------------
 # Solvers dict : n_sides -> solver_class
@@ -1063,14 +1148,6 @@ class TopologyApplier:
         return idx_ops
 
     @staticmethod
-    def _log_concave(bm, label=""):
-        n = 0
-        for f in bm.faces:
-            if f.is_valid and len(f.verts) == 4 and not MeshUtils.is_convex(f):
-                n += 1
-        print(f"[{label}] concave quads: {n}")
-
-    @staticmethod
     def _resolve_ops(bm, idx_ops):
         bm.verts.ensure_lookup_table()
         bm.edges.ensure_lookup_table()
@@ -1162,21 +1239,25 @@ class QuadrangulationEngine:
                 solver = solver_cls()
                 candidates = solver.solve(bm, face, self.w)
 
-                if not candidates or candidates[0].score == float('-inf'):
+                if not candidates:
                     stats['failed'] += 1
                     self.failed_sigs.add((id(face), n_sides))
                 else:
-                    best = candidates[0]
-                    affected = TopologyApplier.apply(bm, best.operations)
-                    if self.max_relax > 0:
-                        MeshUtils.relax_faces(
-                            bm, affected, self.max_relax,
-                            collinear_angle=self.collinear_angle,
-                            push_factor=self.push_factor,
-                            reflex_lerp=self.reflex_lerp,
-                            max_edge_count=self.max_edge_count)
-                    bm.faces.index_update()
-                    stats['solved'] += 1
+                    best = self._first_valid_candidate(bm, candidates)
+                    if best is None:
+                        stats['failed'] += 1
+                        self.failed_sigs.add((id(face), n_sides))
+                    else:
+                        affected = TopologyApplier.apply(bm, best.operations)
+                        if self.max_relax > 0:
+                            MeshUtils.relax_faces(
+                                bm, affected, self.max_relax,
+                                collinear_angle=self.collinear_angle,
+                                push_factor=self.push_factor,
+                                reflex_lerp=self.reflex_lerp,
+                                max_edge_count=self.max_edge_count)
+                        bm.faces.index_update()
+                        stats['solved'] += 1
 
             self._reset_tags(bm)
 
@@ -1253,6 +1334,52 @@ class QuadrangulationEngine:
                 if len(pool) >= k:
                     break
         return [(f, n) for n, f in pool[:k]]
+
+    # =========================================================================
+    # Concavity prevention — reject candidates that would create bad geometry
+    # =========================================================================
+
+    def _new_faces_are_bad(self, bm, new_faces):
+        for f in new_faces:
+            if not f.is_valid:
+                return True
+            n = len(f.verts)
+            if n < 3:
+                return True
+            if n > 3 and not MeshUtils.is_convex(f):
+                return True
+            if f.calc_area() < self.min_area:
+                return True
+        return False
+
+    def _first_valid_candidate(self, bm, candidates):
+        for c in candidates:
+            if not c or not c.operations or c.score == float('-inf'):
+                continue
+            if not self._candidate_creates_bad_faces(bm, c):
+                return c
+        return None
+
+    def _candidate_creates_bad_faces(self, bm, candidate):
+        if not candidate or not candidate.operations:
+            return False
+        kinds = {op[0] for op in candidate.operations if op}
+        if not (kinds & {'quad_loop', 'diagonal_cut', 'hexagon_center'}):
+            return False
+        copy = bm.copy()
+        try:
+            old = set(copy.faces)
+            idx_ops = TopologyApplier._ops_to_indices(candidate.operations)
+            ops_resolved = TopologyApplier._resolve_ops(copy, idx_ops)
+            TopologyApplier.apply(copy, ops_resolved)
+            copy.faces.ensure_lookup_table()
+            copy.normal_update()
+            new_faces = [f for f in copy.faces if f not in old]
+            return self._new_faces_are_bad(copy, new_faces)
+        except Exception:
+            return True
+        finally:
+            copy.free()
 
     # =========================================================================
     # Multi-Start Greedy — run N independent greedy passes, keep best
@@ -1357,20 +1484,25 @@ class QuadrangulationEngine:
                 else:
                     solver = solver_cls()
                     candidates = solver.solve(bm, face, self.w)
-                    if not candidates or candidates[0].score == float('-inf'):
+                    if not candidates:
                         failed += 1
                         failed_sigs.add((id(face), n_sides))
                     else:
-                        affected = TopologyApplier.apply(bm, candidates[0].operations)
-                        if self.max_relax > 0:
-                            MeshUtils.relax_faces(
-                                bm, affected, self.max_relax,
-                                collinear_angle=self.collinear_angle,
-                                push_factor=self.push_factor,
-                                reflex_lerp=self.reflex_lerp,
-                                max_edge_count=self.max_edge_count)
-                        bm.faces.index_update()
-                        solved += 1
+                        best = self._first_valid_candidate(bm, candidates)
+                        if best is None:
+                            failed += 1
+                            failed_sigs.add((id(face), n_sides))
+                        else:
+                            affected = TopologyApplier.apply(bm, best.operations)
+                            if self.max_relax > 0:
+                                MeshUtils.relax_faces(
+                                    bm, affected, self.max_relax,
+                                    collinear_angle=self.collinear_angle,
+                                    push_factor=self.push_factor,
+                                    reflex_lerp=self.reflex_lerp,
+                                    max_edge_count=self.max_edge_count)
+                            bm.faces.index_update()
+                            solved += 1
 
                 for f in bm.faces:
                     n_side = len(f.verts)
@@ -1405,10 +1537,6 @@ class QuadrangulationEngine:
             stats['orig_faces'] = orig_faces
             stats['remaining'] = remaining
             stats['final_faces'] = len(best_bm.faces)
-            _bm_tmp = bmesh.new()
-            _bm_tmp.from_mesh(me)
-            TopologyApplier._log_concave(_bm_tmp, "multi_greedy_final")
-            _bm_tmp.free()
             best_bm.free()
         return stats
 
@@ -1521,6 +1649,7 @@ class QuadrangulationEngine:
                         idx_ops = TopologyApplier._ops_to_indices(c.operations)
                         try:
                             ops_resolved = TopologyApplier._resolve_ops(child.bm, idx_ops)
+                            before = set(child.bm.faces)
                             affected = TopologyApplier.apply(child.bm, ops_resolved)
                             if self.max_relax > 0:
                                 MeshUtils.relax_faces(
@@ -1529,6 +1658,12 @@ class QuadrangulationEngine:
                                     push_factor=self.push_factor,
                                     reflex_lerp=self.reflex_lerp,
                                     max_edge_count=self.max_edge_count)
+                            child.bm.faces.ensure_lookup_table()
+                            child.bm.normal_update()
+                            new_faces = [f for f in child.bm.faces if f not in before]
+                            if self._new_faces_are_bad(child.bm, new_faces):
+                                child.free()
+                                continue
                             child.op_seq.append(idx_ops)
                             new_states.append(child)
                             _had_child = True
@@ -1572,10 +1707,6 @@ class QuadrangulationEngine:
             if st is not final:
                 st.free()
 
-        _bm_tmp = bmesh.new()
-        _bm_tmp.from_mesh(me)
-        TopologyApplier._log_concave(_bm_tmp, "beam_final")
-        _bm_tmp.free()
         return stats
 
 # -----------------------------------------------------------------------------
