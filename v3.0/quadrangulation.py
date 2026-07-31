@@ -48,8 +48,11 @@ DEFAULT_SHORT_EDGE_PENALTY_WEIGHT = 5.0
 DEFAULT_CENTER_SUBS_PENALTY_WEIGHT = 5.0
 DEFAULT_AREA_PENALTY_WEIGHT = 50.0
 DEFAULT_QUAD_PERFECTION_WEIGHT = 20.0
-DEFAULT_TRIANGLE_PERFECTION_WEIGHT = 0.5
 DEFAULT_HEXAGON_PERFECTION_WEIGHT = 0.5
+
+# UI master sliders: each multiplies its family of weights (1.0 = defaults)
+DEFAULT_TOPOLOGY_STRENGTH = 0.5
+DEFAULT_SHAPE_STRENGTH = 0.5
 
 # Default limit/relax values
 DEFAULT_MAX_LOOP_LENGTH = 20
@@ -88,32 +91,24 @@ class MeshUtils:
 
     @staticmethod
     def angle90_deviation(face):
-        loops = list(face.loops)
-        n = len(loops)
+        normal = face.normal
         deviation = 0.0
-        for i in range(n):
-            v0 = loops[i].vert
-            v1 = loops[(i + 1) % n].vert
-            v2 = loops[(i + 2) % n].vert
-            a = (v1.co - v0.co).normalized()
-            b = (v2.co - v1.co).normalized()
-            dot = max(-1, min(1, a.dot(b)))
+        for loop in face.loops:
+            v = loop.vert.co
+            prev = loop.link_loop_prev.vert.co
+            nxt = loop.link_loop_next.vert.co
+            d1 = (prev - v)
+            d2 = (nxt - v)
+            l1 = d1.length
+            l2 = d2.length
+            if l1 < MeshUtils.EPSILON_LENGTH or l2 < MeshUtils.EPSILON_LENGTH:
+                continue
+            dot = max(-1.0, min(1.0, d1.dot(d2) / (l1 * l2)))
             angle = math.degrees(math.acos(dot))
+            if d1.cross(d2).dot(normal) > MeshUtils.EPSILON_NORMAL:
+                angle = 360.0 - angle
             deviation += abs(angle - 90)
         return deviation
-
-    @staticmethod
-    def equilateral_deviation(tri_verts):
-        sides = []
-        for i in range(3):
-            d = (tri_verts[i].co - tri_verts[(i + 1) % 3].co).length
-            sides.append(d)
-        perimeter = sum(sides)
-        if perimeter == 0:
-            return 0.0
-        return max(abs(sides[0] - sides[1]),
-                   abs(sides[1] - sides[2]),
-                   abs(sides[0] - sides[2])) / perimeter
 
     @staticmethod
     def is_convex(face):
@@ -190,6 +185,43 @@ class MeshUtils:
                 break
         bm.verts.index_update()
 
+    @staticmethod
+    def fix_concave_quads(bm, max_straighten=3, straighten_lerp=0.5):
+        """Guarantee zero concave quads in the mesh.
+
+        Reflex vertices are first pulled toward their quad centroid; any quad
+        that is still concave afterwards is triangulated, which always yields
+        convex faces.
+        """
+        for _ in range(max_straighten):
+            fixed = False
+            for f in list(bm.faces):
+                if not f.is_valid or len(f.verts) != 4:
+                    continue
+                if MeshUtils.is_convex(f):
+                    continue
+                reflex = None
+                for loop in f.loops:
+                    d1 = loop.link_loop_prev.vert.co - loop.vert.co
+                    d2 = loop.link_loop_next.vert.co - loop.vert.co
+                    if d1.cross(d2).dot(f.normal) > MeshUtils.EPSILON_NORMAL:
+                        reflex = loop.vert
+                        break
+                if reflex is None:
+                    continue
+                centroid = sum((v.co for v in f.verts), Vector()) / 4
+                reflex.co = reflex.co.lerp(centroid, straighten_lerp)
+                fixed = True
+            if not fixed:
+                break
+        for f in list(bm.faces):
+            if f.is_valid and len(f.verts) == 4 and not MeshUtils.is_convex(f):
+                bmesh.ops.triangulate(bm, faces=[f], quad_method='SHORT_EDGE',
+                                      ngon_method='BEAUTY')
+        bm.verts.index_update()
+        bm.edges.index_update()
+        bm.faces.index_update()
+
 # -----------------------------------------------------------------------------
 # Weights
 # -----------------------------------------------------------------------------
@@ -198,9 +230,20 @@ class ScoreWeights:
     __slots__ = (
         'loop_length_weight', 'polygon_bonus_weight',
         'adjacent_triangle_penalty_weight', 'quad_perfection_weight',
-        'triangle_perfection_weight', 'hexagon_perfection_weight',
+        'hexagon_perfection_weight',
         'branch_penalty_weight',
         'short_edge_penalty_weight', 'center_subs_penalty_weight',
+        'area_penalty_weight',
+    )
+
+    TOPOLOGY_WEIGHTS = (
+        'loop_length_weight', 'polygon_bonus_weight',
+        'adjacent_triangle_penalty_weight', 'branch_penalty_weight',
+        'center_subs_penalty_weight',
+    )
+    SHAPE_WEIGHTS = (
+        'quad_perfection_weight', 'hexagon_perfection_weight',
+        'short_edge_penalty_weight',
         'area_penalty_weight',
     )
 
@@ -214,11 +257,24 @@ class ScoreWeights:
             'center_subs_penalty_weight': DEFAULT_CENTER_SUBS_PENALTY_WEIGHT,
             'area_penalty_weight': DEFAULT_AREA_PENALTY_WEIGHT,
             'quad_perfection_weight': DEFAULT_QUAD_PERFECTION_WEIGHT,
-            'triangle_perfection_weight': DEFAULT_TRIANGLE_PERFECTION_WEIGHT,
             'hexagon_perfection_weight': DEFAULT_HEXAGON_PERFECTION_WEIGHT,
         }
+        if props is None:
+            topo = DEFAULT_TOPOLOGY_STRENGTH
+            shape = DEFAULT_SHAPE_STRENGTH
+        else:
+            topo = getattr(props, 'topology_strength', DEFAULT_TOPOLOGY_STRENGTH)
+            shape = getattr(props, 'shape_strength', DEFAULT_SHAPE_STRENGTH)
+        topo_factor = topo / DEFAULT_TOPOLOGY_STRENGTH
+        shape_factor = shape / DEFAULT_SHAPE_STRENGTH
         for k, v in defaults.items():
-            setattr(self, k, getattr(props, k, v) if props else v)
+            if k in ScoreWeights.TOPOLOGY_WEIGHTS:
+                factor = topo_factor
+            elif k in ScoreWeights.SHAPE_WEIGHTS:
+                factor = shape_factor
+            else:
+                factor = 1.0
+            setattr(self, k, v * factor)
 
 # -----------------------------------------------------------------------------
 # Quad Loop — Best-First Search
@@ -227,11 +283,13 @@ class ScoreWeights:
 class _SearchNode:
     __slots__ = ('edge', 'quad_face', 'path_edges', 'length',
                  'branch_offs', 'visited', 'partial_score',
+                 'quad_dev_sum', 'short_edge_sum',
                  'adj_tri_penalty', 'origin_tri')
 
     def __init__(self, edge, quad_face, path_edges, length,
-                 branch_offs, visited, partial_score, adj_tri_penalty,
-                 origin_tri=None):
+                 branch_offs, visited, partial_score,
+                 quad_dev_sum=0.0, short_edge_sum=0.0,
+                 adj_tri_penalty=0.0, origin_tri=None):
         self.edge = edge
         self.quad_face = quad_face
         self.path_edges = path_edges
@@ -239,6 +297,8 @@ class _SearchNode:
         self.branch_offs = branch_offs
         self.visited = visited
         self.partial_score = partial_score
+        self.quad_dev_sum = quad_dev_sum
+        self.short_edge_sum = short_edge_sum
         self.adj_tri_penalty = adj_tri_penalty
         self.origin_tri = origin_tri
 
@@ -294,18 +354,24 @@ class QuadLoopSearch:
     def _adjacent_loops(loop):
         return [loop.link_loop_next, loop.link_loop_prev]
 
-    def _make_leaf(self, edge, path, length, penalty, path_quality=0.0):
+    def _make_leaf(self, edge, path, length, penalty,
+                   quad_dev_sum, short_edge_sum):
         term_score = (-self.w.loop_length_weight * length
                       + self.w.polygon_bonus_weight * POLYGON_REACHED_BONUS
-                      - self.w.adjacent_triangle_penalty_weight * penalty)
+                      - self.w.adjacent_triangle_penalty_weight * penalty
+                      - self.w.quad_perfection_weight * quad_dev_sum
+                      - short_edge_sum)
 
         ops = self._path_to_ops(path)
         return SolutionCandidate(ops, term_score, {
             'loop_length': length, 'termination': 'polygon', 'branch_offs': 0})
 
-    def _make_dead_leaf(self, edge, path, length, penalty, reason, path_quality=0.0):
+    def _make_dead_leaf(self, edge, path, length, penalty, reason,
+                        quad_dev_sum, short_edge_sum):
         score = (-self.w.loop_length_weight * length
-                 - self.w.adjacent_triangle_penalty_weight * penalty)
+                 - self.w.adjacent_triangle_penalty_weight * penalty
+                 - self.w.quad_perfection_weight * quad_dev_sum
+                 - short_edge_sum)
         if reason == 'boundary':
             score += self.w.polygon_bonus_weight * POLYGON_REACHED_BONUS
         ops = self._path_to_ops(path)
@@ -389,6 +455,9 @@ class QuadLoopSearch:
         if not self.edge_is_valid(exit_edge, for_traversal=True):
             return
 
+        quad_dev = MeshUtils.angle90_deviation(node.quad_face)
+        short_edge = self._short_edge_penalty(exit_edge, node.quad_face)
+
         new_path = list(node.path_edges) + [exit_edge]
         new_len = node.length + 1
         new_visited = set(node.visited)
@@ -403,36 +472,42 @@ class QuadLoopSearch:
                 break
 
         if poly_reached:
-            _pq = -(node.partial_score + node.length * self.w.loop_length_weight)
             if f is node.origin_tri and n == 3:
                 results.append(self._make_dead_leaf(
                     exit_edge, new_path, new_len,
-                    node.adj_tri_penalty, 'fractal', _pq))
+                    node.adj_tri_penalty, 'fractal',
+                    node.quad_dev_sum + quad_dev,
+                    node.short_edge_sum + short_edge))
                 return
             results.append(self._make_leaf(
-                exit_edge, new_path, new_len, node.adj_tri_penalty, _pq))
+                exit_edge, new_path, new_len, node.adj_tri_penalty,
+                node.quad_dev_sum + quad_dev,
+                node.short_edge_sum + short_edge))
             return
 
         # Boundary termination
         if len(exit_edge.link_faces) < 2:
-            _pq = -(node.partial_score + node.length * self.w.loop_length_weight)
             results.append(self._make_dead_leaf(
-                exit_edge, new_path, new_len, node.adj_tri_penalty, 'boundary', _pq))
+                exit_edge, new_path, new_len, node.adj_tri_penalty, 'boundary',
+                node.quad_dev_sum + quad_dev,
+                node.short_edge_sum + short_edge))
             return
 
         # Loop-back termination
         if exit_edge.index in node.visited:
-            _pq = -(node.partial_score + node.length * self.w.loop_length_weight)
             results.append(self._make_dead_leaf(
-                exit_edge, new_path, new_len, node.adj_tri_penalty, 'loop', _pq))
+                exit_edge, new_path, new_len, node.adj_tri_penalty, 'loop',
+                node.quad_dev_sum + quad_dev,
+                node.short_edge_sum + short_edge))
             return
 
         # Continue to next quad
         next_face = self._other_face(exit_edge, node.quad_face)
         if next_face is None or len(next_face.verts) != 4:
-            _pq = -(node.partial_score + node.length * self.w.loop_length_weight)
             results.append(self._make_dead_leaf(
-                exit_edge, new_path, new_len, node.adj_tri_penalty, 'dead_end', _pq))
+                exit_edge, new_path, new_len, node.adj_tri_penalty, 'dead_end',
+                node.quad_dev_sum + quad_dev,
+                node.short_edge_sum + short_edge))
             return
 
         next_loop = self._find_loop(exit_edge, next_face)
@@ -440,18 +515,19 @@ class QuadLoopSearch:
             return
 
         new_branch_offs = node.branch_offs + (1 if is_branch else 0)
-        quad_dev = MeshUtils.angle90_deviation(node.quad_face)
         new_score = (node.partial_score
                      - self.w.loop_length_weight
                      - self.w.quad_perfection_weight * quad_dev
                      - self.w.branch_penalty_weight * new_branch_offs
-                     - self._short_edge_penalty(exit_edge, node.quad_face))
+                     - short_edge)
 
         child = _SearchNode(
             edge=exit_edge, quad_face=next_face,
             path_edges=new_path, length=new_len,
             branch_offs=new_branch_offs, visited=new_visited,
             partial_score=new_score,
+            quad_dev_sum=node.quad_dev_sum + quad_dev,
+            short_edge_sum=node.short_edge_sum + short_edge,
             adj_tri_penalty=node.adj_tri_penalty,
             origin_tri=node.origin_tri,
         )
@@ -537,10 +613,8 @@ class PentagonSolver(BaseSolver):
             j = (i + 2) % 5
 
             quad_idx = [(i + k) % 5 for k in range(4)]
-            tri_idx = [(i + 2 + k) % 5 for k in range(3)]
 
             quad_verts = [verts[k] for k in quad_idx]
-            tri_verts = [verts[k] for k in tri_idx]
 
             quad_dev = 0.0
             for k in range(4):
@@ -552,15 +626,12 @@ class PentagonSolver(BaseSolver):
                 dot = max(-1, min(1, a.dot(b)))
                 quad_dev += abs(math.degrees(math.acos(dot)) - 90)
 
-            tri_dev = MeshUtils.equilateral_deviation(tri_verts)
-
-            score = (-weights.quad_perfection_weight * quad_dev
-                     - weights.triangle_perfection_weight * tri_dev)
+            score = -weights.quad_perfection_weight * quad_dev
 
             ops = [('diagonal_cut', face, verts[i], verts[j])]
             candidates.append(SolutionCandidate(ops, score, {
                 'solver': 'pentagon', 'cut': (i, j),
-                'quad_dev': quad_dev, 'tri_dev': tri_dev}))
+                'quad_dev': quad_dev}))
 
         candidates.sort(key=lambda c: c.score, reverse=True)
         return candidates[:1]
@@ -1109,7 +1180,14 @@ class QuadrangulationEngine:
 
             self._reset_tags(bm)
 
-        if stats['solved'] > 0 or stats['remaining']:
+        MeshUtils.fix_concave_quads(bm)
+        remaining = {}
+        for f in bm.faces:
+            n = len(f.verts)
+            if n != 4:
+                remaining[n] = remaining.get(n, 0) + 1
+        stats['remaining'] = remaining
+        if stats['solved'] > 0 or remaining:
             bm.to_mesh(me)
             me.update()
 
@@ -1315,10 +1393,18 @@ class QuadrangulationEngine:
         stats = {'solved': 0, 'failed': 0, 'unsupported': 0, 'remaining': {},
                  'orig_faces': orig_faces, 'final_faces': 0}
         if best_bm is not None:
+            MeshUtils.fix_concave_quads(best_bm)
+            remaining = {}
+            for f in best_bm.faces:
+                n = len(f.verts)
+                if n != 4:
+                    remaining[n] = remaining.get(n, 0) + 1
             best_bm.to_mesh(me)
             me.update()
             stats.update(best_stats)
             stats['orig_faces'] = orig_faces
+            stats['remaining'] = remaining
+            stats['final_faces'] = len(best_bm.faces)
             _bm_tmp = bmesh.new()
             _bm_tmp.from_mesh(me)
             TopologyApplier._log_concave(_bm_tmp, "multi_greedy_final")
@@ -1471,11 +1557,13 @@ class QuadrangulationEngine:
 
         stats = {'solved': len(final.op_seq), 'failed': 0, 'unsupported': 0, 'remaining': {},
                  'orig_faces': orig_faces, 'final_faces': len(final.bm.faces)}
-        _reset_tags(final.bm)
+        MeshUtils.fix_concave_quads(final.bm)
+        remaining = {}
         for f in final.bm.faces:
             if f.is_valid and len(f.verts) != 4:
-                stats['remaining'][len(f.verts)] = stats['remaining'].get(len(f.verts), 0) + 1
-
+                remaining[len(f.verts)] = remaining.get(len(f.verts), 0) + 1
+        stats['remaining'] = remaining
+        stats['final_faces'] = len(final.bm.faces)
         final.bm.to_mesh(me)
         me.update()
         final.bm.free()
@@ -1498,41 +1586,17 @@ class QuadrangulationProperties(bpy.types.PropertyGroup):
     seed: bpy.props.IntProperty(
         name="Seed", description="Random seed for deterministic results (0 = use fixed seed)",
         default=DEFAULT_SEED, min=0, max=2147483647)
-    polygon_bonus_weight: bpy.props.FloatProperty(
-        name="Polygon Bonus",
-        description="Weight for reaching a polygon at loop end",
-        default=DEFAULT_POLYGON_BONUS_WEIGHT, min=0.0, max=1000.0)
-    loop_length_weight: bpy.props.FloatProperty(
-        name="Loop Length Penalty", description="Weight penalizing long quad loops",
-        default=DEFAULT_LOOP_LENGTH_WEIGHT, min=0.0, max=1000.0)
-    adjacent_triangle_penalty_weight: bpy.props.FloatProperty(
-        name="Adjacent Tri Penalty",
-        description="Penalty for cutting an edge shared by two triangles",
-        default=DEFAULT_ADJACENT_TRIANGLE_PENALTY_WEIGHT, min=0.0, max=1000.0)
-    branch_penalty_weight: bpy.props.FloatProperty(
-        name="Branch Penalty",
-        description="Penalty per branch-off in quad loop search (0=neutral)",
-        default=DEFAULT_BRANCH_PENALTY_WEIGHT, min=0.0, max=1000.0)
-    short_edge_penalty_weight: bpy.props.FloatProperty(
-        name="Short Edge Penalty",
-        description="Penalty for short edges in a face (0=neutral)",
-        default=DEFAULT_SHORT_EDGE_PENALTY_WEIGHT, min=0.0, max=1000.0)
-    center_subs_penalty_weight: bpy.props.FloatProperty(
-        name="Center Subs Penalty",
-        description="Penalty per center subdivision on a face (0=neutral)",
-        default=DEFAULT_CENTER_SUBS_PENALTY_WEIGHT, min=0.0, max=1000.0)
-    quad_perfection_weight: bpy.props.FloatProperty(
-        name="Quad Perfection",
-        description="Weight for quad angle perfection in loop search and scoring",
-        default=DEFAULT_QUAD_PERFECTION_WEIGHT, min=0.0, max=1000.0)
-    triangle_perfection_weight: bpy.props.FloatProperty(
-        name="Triangle Perfection",
-        description="Weight for triangle equilateral deviation",
-        default=DEFAULT_TRIANGLE_PERFECTION_WEIGHT, min=0.0, max=10.0)
-    hexagon_perfection_weight: bpy.props.FloatProperty(
-        name="Hexagon Perfection",
-        description="Weight for hexagon cut quad angle perfection",
-        default=DEFAULT_HEXAGON_PERFECTION_WEIGHT, min=0.0, max=10.0)
+    topology_strength: bpy.props.FloatProperty(
+        name="Structure",
+        description="Prefers a clean quad flow: short loops, no branches, few adjacent "
+                    "triangles, avoids poking faces (center-vertex fallbacks), especially "
+                    "nested ones. 0.5 = default, 0 = ignore, 1 = maximize",
+        default=DEFAULT_TOPOLOGY_STRENGTH, min=0.0, max=1.0)
+    shape_strength: bpy.props.FloatProperty(
+        name="Shape",
+        description="Prefers well-formed faces: right-angle quads, even edge lengths, "
+                    "large faces cut first. 0.5 = default, 0 = ignore, 1 = maximize",
+        default=DEFAULT_SHAPE_STRENGTH, min=0.0, max=1.0)
     max_loop_length: bpy.props.IntProperty(
         name="Max Loop Length",
         description="Maximum quad loop length (0 = no limit)",
@@ -1561,10 +1625,6 @@ class QuadrangulationProperties(bpy.types.PropertyGroup):
         name="Reflex Lerp",
         description="Interpolation factor toward centroid for reflex vertices",
         default=DEFAULT_RELAX_REFLEX_LERP, min=0.0, max=1.0)
-    area_penalty_weight: bpy.props.FloatProperty(
-        name="Area Penalty",
-        description="Penalty for cutting small faces based on area ratio (0=neutral)",
-        default=DEFAULT_AREA_PENALTY_WEIGHT, min=0.0, max=1000.0)
     num_runs: bpy.props.IntProperty(
         name="Search Runs",
         description="Number of greedy passes (higher = more thorough but slower)",
@@ -1666,20 +1726,9 @@ class MESH_PT_Quadrangulate(bpy.types.Panel):
         box.prop(p, "seed")
 
         box = layout.box()
-        box.label(text="Loop Weights")
-        box.prop(p, "loop_length_weight")
-        box.prop(p, "polygon_bonus_weight")
-        box.prop(p, "adjacent_triangle_penalty_weight")
-        box.prop(p, "branch_penalty_weight")
-        box.prop(p, "short_edge_penalty_weight")
-        box.prop(p, "center_subs_penalty_weight")
-        box.prop(p, "area_penalty_weight")
-
-        box = layout.box()
-        box.label(text="Perfection Weights")
-        box.prop(p, "quad_perfection_weight")
-        box.prop(p, "triangle_perfection_weight")
-        box.prop(p, "hexagon_perfection_weight")
+        box.label(text="Weights")
+        box.prop(p, "topology_strength")
+        box.prop(p, "shape_strength")
 
         box = layout.box()
         box.label(text="Search")
@@ -1706,15 +1755,8 @@ class MESH_OT_QuadrangulateReset(bpy.types.Operator):
         props = context.scene.quadrangulation_props
         props.seed = DEFAULT_SEED
         props.num_runs = 8
-        props.loop_length_weight = DEFAULT_LOOP_LENGTH_WEIGHT
-        props.polygon_bonus_weight = DEFAULT_POLYGON_BONUS_WEIGHT
-        props.adjacent_triangle_penalty_weight = DEFAULT_ADJACENT_TRIANGLE_PENALTY_WEIGHT
-        props.branch_penalty_weight = DEFAULT_BRANCH_PENALTY_WEIGHT
-        props.short_edge_penalty_weight = DEFAULT_SHORT_EDGE_PENALTY_WEIGHT
-        props.center_subs_penalty_weight = DEFAULT_CENTER_SUBS_PENALTY_WEIGHT
-        props.quad_perfection_weight = DEFAULT_QUAD_PERFECTION_WEIGHT
-        props.triangle_perfection_weight = DEFAULT_TRIANGLE_PERFECTION_WEIGHT
-        props.hexagon_perfection_weight = DEFAULT_HEXAGON_PERFECTION_WEIGHT
+        props.topology_strength = DEFAULT_TOPOLOGY_STRENGTH
+        props.shape_strength = DEFAULT_SHAPE_STRENGTH
         props.max_loop_length = DEFAULT_MAX_LOOP_LENGTH
         props.max_branch_offs = DEFAULT_MAX_BRANCH_OFFS
         props.max_relax_iterations = DEFAULT_MAX_RELAX_ITERATIONS
@@ -1722,7 +1764,6 @@ class MESH_OT_QuadrangulateReset(bpy.types.Operator):
         props.relax_push_factor = DEFAULT_RELAX_PUSH_FACTOR
         props.relax_reflex_lerp = DEFAULT_RELAX_REFLEX_LERP
         props.relax_max_edge_count = DEFAULT_RELAX_MAX_EDGE_COUNT
-        props.area_penalty_weight = DEFAULT_AREA_PENALTY_WEIGHT
         props.min_area = DEFAULT_MIN_AREA
         return {'FINISHED'}
 

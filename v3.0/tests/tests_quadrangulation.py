@@ -60,7 +60,6 @@ def _run_engine(obj, max_loop_length=20, max_branch_offs=2, max_relax=0, max_ite
     w.polygon_bonus_weight = 100.0
     w.adjacent_triangle_penalty_weight = 0.0
     w.quad_perfection_weight = 0.0
-    w.triangle_perfection_weight = 0.0
     w.hexagon_perfection_weight = 0.0
     engine = QuadrangulationEngine(
         obj, w, max_length=max_loop_length,
@@ -504,6 +503,21 @@ def test_no_concave_polygons():
         _ok()
 
 
+def test_remaining_stats_match_mesh():
+    _log("Report: remaining stats match final mesh")
+    coords = [(0, 0), (2, 0), (3, 1.5), (2.5, 3),
+              (0.5, 3.5), (-1, 2), (-0.5, 0.5)]
+    verts = {i: (x, y, 0.0) for i, (x, y) in enumerate(coords)}
+    faces = [[0, 1, 2, 3, 4, 5, 6]]
+    obj, me = _make_mesh(verts, faces, name="RemainingStats")
+    stats = _run_engine(obj, max_iterations=500)
+    actual = {n: c for n, c in _face_count(obj).items() if n != 4}
+    if stats['remaining'] == {7: 1} and stats['remaining'] == actual:
+        _ok()
+    else:
+        _fail(f"stats['remaining']={stats['remaining']} != actual {actual}")
+
+
 # =========================================================================
 # Runner
 # =========================================================================
@@ -520,6 +534,7 @@ TESTS = [
     ("BC2", test_branch_cut_1_to_3_AB_DA),
     ("X1", test_triangles_10_scattered),
     ("CV1", test_no_concave_polygons),
+    ("RV1", test_remaining_stats_match_mesh),
 ]
 
 
