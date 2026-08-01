@@ -37,6 +37,16 @@ from mathutils import Vector
 # -----------------------------------------------------------------------------
 
 POLYGON_REACHED_BONUS = 100.0
+# Bonus (in loop-length units) for a loop that terminates by reaching another
+# polygon or the mesh boundary. Kept small so loop length stays meaningful:
+# previously POLYGON_REACHED_BONUS × polygon_bonus_weight (5000) vs a loop
+# cost of 1/edge made long loops look as good as short ones.
+LOOP_TERMINATION_BONUS = 10.0
+# A tri_quad_merge is scored like a loop of this many edges: it resolves one
+# triangle locally but consumes (destroys) one neighbor quad. Giving it a cost
+# above a typical short loop keeps merges as a fallback instead of letting them
+# out-rank short loops, which would eat up quads other triangles need.
+MERGE_LOOP_LENGTH = 3.0
 CENTER_LAYER_NAME = "center_count"
 
 # Default weight values
@@ -47,6 +57,12 @@ DEFAULT_BRANCH_PENALTY_WEIGHT = 0.0
 DEFAULT_SHORT_EDGE_PENALTY_WEIGHT = 5.0
 DEFAULT_CENTER_SUBS_PENALTY_WEIGHT = 5.0
 DEFAULT_AREA_PENALTY_WEIGHT = 50.0
+# Per-original-quad penalty applied when an operation destroys an original
+# input quad (e.g. tri_quad_merge consuming a neighbor quad). Linear, not a
+# veto: the solver may still destroy original quads when it is worthwhile.
+# Kept well below the per-non-quad cost (POLYGON_REACHED_BONUS ×
+# polygon_bonus_weight = 5000) so quadrangulation stays the top priority.
+DEFAULT_ORIGINAL_QUAD_PENALTY_WEIGHT = 1000.0
 DEFAULT_QUAD_PERFECTION_WEIGHT = 20.0
 DEFAULT_HEXAGON_PERFECTION_WEIGHT = 0.5
 
@@ -109,6 +125,33 @@ class MeshUtils:
                 angle = 360.0 - angle
             deviation += abs(angle - 90)
         return deviation
+
+    @staticmethod
+    def quad_dev_coords(coords):
+        n = len(coords)
+        if n < 4:
+            return 0.0
+        nrm = (coords[1] - coords[0]).cross(coords[2] - coords[1])
+        if nrm.length < MeshUtils.EPSILON_NORMAL:
+            return float('inf')
+        nrm.normalize()
+        dev = 0.0
+        for i in range(n):
+            v = coords[i]
+            prev = coords[(i - 1) % n]
+            nxt = coords[(i + 1) % n]
+            d1 = (prev - v)
+            d2 = (nxt - v)
+            l1 = d1.length
+            l2 = d2.length
+            if l1 < MeshUtils.EPSILON_LENGTH or l2 < MeshUtils.EPSILON_LENGTH:
+                continue
+            dot = max(-1.0, min(1.0, d1.dot(d2) / (l1 * l2)))
+            angle = math.degrees(math.acos(dot))
+            if d1.cross(d2).dot(nrm) > MeshUtils.EPSILON_NORMAL:
+                angle = 360.0 - angle
+            dev += abs(angle - 90)
+        return dev
 
     @staticmethod
     def is_convex(face):
@@ -184,6 +227,19 @@ class MeshUtils:
                     reflex_lerp=0.5, max_edge_count=5):
         valid = [f for f in faces
                  if hasattr(f, 'verts') and f.is_valid and len(f.verts) >= 3]
+        valid_set = set(valid)
+
+        guard_verts = set()
+        for f in valid:
+            for v in f.verts:
+                guard_verts.add(v)
+            for e in f.edges:
+                for nf in e.link_faces:
+                    if nf.is_valid and nf not in valid_set:
+                        for v in nf.verts:
+                            guard_verts.add(v)
+        saved = {v: v.co.copy() for v in guard_verts}
+
         edge_count_cache = {}
 
         def _edge_count(v):
@@ -238,6 +294,22 @@ class MeshUtils:
                         done = False
             if done:
                 break
+
+        # Undo any relaxation that left a quad concave. Individual moves are
+        # guarded, but moves can accumulate; without this the end-of-pass
+        # fix would triangulate engine-created quads into unsolvable tris.
+        if saved:
+            moved = [v for v in saved if (v.co - saved[v]).length > 1e-12]
+            bad = set()
+            for v in moved:
+                for nf in v.link_faces:
+                    if (nf.is_valid and len(nf.verts) == 4
+                            and not MeshUtils.is_convex(nf)):
+                        bad.add(nf)
+            for f in bad:
+                for v in f.verts:
+                    if v in saved:
+                        v.co = saved[v]
         bm.verts.index_update()
 
     @staticmethod
@@ -288,13 +360,13 @@ class ScoreWeights:
         'hexagon_perfection_weight',
         'branch_penalty_weight',
         'short_edge_penalty_weight', 'center_subs_penalty_weight',
-        'area_penalty_weight',
+        'area_penalty_weight', 'original_quad_penalty_weight',
     )
 
     TOPOLOGY_WEIGHTS = (
         'loop_length_weight', 'polygon_bonus_weight',
         'adjacent_triangle_penalty_weight', 'branch_penalty_weight',
-        'center_subs_penalty_weight',
+        'center_subs_penalty_weight', 'original_quad_penalty_weight',
     )
     SHAPE_WEIGHTS = (
         'quad_perfection_weight', 'hexagon_perfection_weight',
@@ -311,6 +383,7 @@ class ScoreWeights:
             'short_edge_penalty_weight': DEFAULT_SHORT_EDGE_PENALTY_WEIGHT,
             'center_subs_penalty_weight': DEFAULT_CENTER_SUBS_PENALTY_WEIGHT,
             'area_penalty_weight': DEFAULT_AREA_PENALTY_WEIGHT,
+            'original_quad_penalty_weight': DEFAULT_ORIGINAL_QUAD_PENALTY_WEIGHT,
             'quad_perfection_weight': DEFAULT_QUAD_PERFECTION_WEIGHT,
             'hexagon_perfection_weight': DEFAULT_HEXAGON_PERFECTION_WEIGHT,
         }
@@ -412,7 +485,7 @@ class QuadLoopSearch:
     def _make_leaf(self, edge, path, length, penalty,
                    quad_dev_sum, short_edge_sum):
         term_score = (-self.w.loop_length_weight * length
-                      + self.w.polygon_bonus_weight * POLYGON_REACHED_BONUS
+                      + LOOP_TERMINATION_BONUS
                       - self.w.adjacent_triangle_penalty_weight * penalty
                       - self.w.quad_perfection_weight * quad_dev_sum
                       - short_edge_sum)
@@ -428,7 +501,7 @@ class QuadLoopSearch:
                  - self.w.quad_perfection_weight * quad_dev_sum
                  - short_edge_sum)
         if reason == 'boundary':
-            score += self.w.polygon_bonus_weight * POLYGON_REACHED_BONUS
+            score += LOOP_TERMINATION_BONUS
         ops = self._path_to_ops(path)
         return SolutionCandidate(ops, score, {
             'loop_length': length, 'termination': reason, 'branch_offs': 0})
@@ -594,7 +667,7 @@ class QuadLoopSearch:
 # -----------------------------------------------------------------------------
 
 class BaseSolver:
-    def solve(self, bm, face, weights):
+    def solve(self, bm, face, weights, orig_quad_keys=None):
         raise NotImplementedError
 
 # -----------------------------------------------------------------------------
@@ -602,13 +675,72 @@ class BaseSolver:
 # -----------------------------------------------------------------------------
 
 class TriangleSolver(BaseSolver):
-    def solve(self, bm, face, weights):
+    def _merge_candidate(self, bm, tri, edge, quad, weights, orig_quad_keys=None):
+        shared = list(edge.verts)
+        apex = None
+        for v in tri.verts:
+            if v not in shared:
+                apex = v
+                break
+        if apex is None:
+            return None
+        far = None
+        for e in quad.edges:
+            if e is edge:
+                continue
+            if (e.verts[0] not in shared and e.verts[1] not in shared):
+                far = e
+                break
+        if far is None:
+            return None
+        # Splitting `far` adds a vertex to every face sharing it; if a 6+ gon
+        # sits across it, that face would grow into an unsolvable 7+ gon.
+        for f in far.link_faces:
+            if f is not quad and len(f.verts) >= 6:
+                return None
+        loop_ab = None
+        for loop in edge.link_loops:
+            if loop.face == quad:
+                loop_ab = loop
+                break
+        if loop_ab is None:
+            return None
+        b = loop_ab.link_loop_next.vert
+        d = loop_ab.link_loop_next.link_loop_next.vert
+        e_v = loop_ab.link_loop_prev.vert
+        m_co = (far.verts[0].co + far.verts[1].co) * 0.5
+        coords_q1 = [loop_ab.vert.co, apex.co, m_co, e_v.co]
+        coords_q2 = [apex.co, b.co, d.co, m_co]
+        dev_sum = (MeshUtils.quad_dev_coords(coords_q1)
+                   + MeshUtils.quad_dev_coords(coords_q2))
+        if math.isinf(dev_sum):
+            return None
+        score = (LOOP_TERMINATION_BONUS
+                 - weights.loop_length_weight * MERGE_LOOP_LENGTH
+                 - weights.quad_perfection_weight * dev_sum)
+        if orig_quad_keys and weights.original_quad_penalty_weight > 0.0:
+            key = frozenset(tuple(round(v.co[j], 6) for j in range(3))
+                            for v in quad.verts)
+            if key in orig_quad_keys:
+                score -= weights.original_quad_penalty_weight
+        ops = [('tri_quad_merge', tri, edge)]
+        return SolutionCandidate(ops, score, {
+            'solver': 'triangle', 'start_edge': edge.index,
+            'termination': 'tri_quad_merge', 'quad_dev': dev_sum})
+
+    def solve(self, bm, face, weights, orig_quad_keys=None):
         candidates = []
         qls = QuadLoopSearch(bm, weights)
 
         for edge in face.edges:
             if not QuadLoopSearch.edge_is_valid(edge, for_traversal=True):
                 continue
+            neighbor = QuadLoopSearch._other_face(edge, face)
+            if neighbor is not None and len(neighbor.verts) == 4:
+                merge_c = self._merge_candidate(
+                    bm, face, edge, neighbor, weights, orig_quad_keys)
+                if merge_c is not None:
+                    candidates.append(merge_c)
             results = qls.search(edge, face)
             for c in results:
                 c.sub_scores['solver'] = 'triangle'
@@ -660,9 +792,36 @@ class TriangleSolver(BaseSolver):
 # -----------------------------------------------------------------------------
 
 class PentagonSolver(BaseSolver):
-    def solve(self, bm, face, weights):
+    # A pentagon vertex within this many degrees of being perfectly
+    # straight (interior angle) is treated as a degenerate spike: dissolving
+    # it yields a quad without introducing tiny sliver faces.
+    DEGENERATE_ANGLE = 170.0
+
+    def solve(self, bm, face, weights, orig_quad_keys=None):
         verts = list(face.verts)
         candidates = []
+
+        for i in range(5):
+            v = verts[i]
+            p = verts[i - 1]
+            n = verts[(i + 1) % 5]
+            d1 = p.co - v.co
+            d2 = n.co - v.co
+            l1 = d1.length
+            l2 = d2.length
+            if l1 > MeshUtils.EPSILON_LENGTH and l2 > MeshUtils.EPSILON_LENGTH:
+                dot = max(-1.0, min(1.0, d1.dot(d2) / (l1 * l2)))
+                angle = math.degrees(math.acos(dot))
+                if angle >= self.DEGENERATE_ANGLE:
+                    score = LOOP_TERMINATION_BONUS
+                    if weights.center_subs_penalty_weight > 0.0:
+                        layer = bm.faces.layers.int.get(CENTER_LAYER_NAME)
+                        if layer is not None:
+                            score -= weights.center_subs_penalty_weight * face[layer]
+                    ops = [('dissolve_vert', face, v)]
+                    candidates.append(SolutionCandidate(ops, score, {
+                        'solver': 'pentagon', 'dissolve': i,
+                        'termination': 'degenerate_dissolve'}))
 
         for i in range(5):
             j = (i + 2) % 5
@@ -696,7 +855,7 @@ class PentagonSolver(BaseSolver):
 # -----------------------------------------------------------------------------
 
 class HexagonSolver(BaseSolver):
-    def solve(self, bm, face, weights):
+    def solve(self, bm, face, weights, orig_quad_keys=None):
         verts = list(face.verts)
         if len(verts) != 6:
             return [SolutionCandidate([], float('-inf'))]
@@ -729,35 +888,37 @@ class HexagonSolver(BaseSolver):
                 'solver': 'hexagon', 'pattern': offset,
                 'quads_deviation': predicted_dev}))
 
-        if not MeshUtils.is_convex_robust(face):
-            for i in range(3):
-                j = i + 3
-                quads = ([verts[(i + k) % 6] for k in range(4)],
-                         [verts[(j + k) % 6] for k in range(4)])
-                dev = 0.0
-                for quad in quads:
-                    for k in range(4):
-                        v0 = quad[k].co
-                        v1 = quad[(k + 1) % 4].co
-                        v2 = quad[(k + 2) % 4].co
-                        d1 = v1 - v0
-                        d2 = v2 - v1
-                        l1 = d1.length
-                        l2 = d2.length
-                        if l1 < MeshUtils.EPSILON_LENGTH or l2 < MeshUtils.EPSILON_LENGTH:
-                            continue
-                        dot = max(-1.0, min(1.0, d1.dot(d2) / (l1 * l2)))
-                        dev += abs(math.degrees(math.acos(dot)) - 90)
-                score = -weights.quad_perfection_weight * dev
-                if weights.short_edge_penalty_weight > 0.0:
-                    max_len = max(e.calc_length() for e in face.edges)
-                    if max_len > 0:
-                        cut_len = (verts[i].co - verts[j].co).length
-                        score -= weights.short_edge_penalty_weight * (1.0 - cut_len / max_len)
-                ops = [('diagonal_cut', face, verts[i], verts[j])]
-                candidates.append(SolutionCandidate(ops, score, {
-                    'solver': 'hexagon', 'pattern': 'diag_%d' % i,
-                    'quads_deviation': dev}))
+        # Always offer the direct two-quad cut as a fallback: the center
+        # pattern can produce concave quads on non-planar (yet convex)
+        # hexagons, and validation then falls back to a diagonal cut.
+        for i in range(3):
+            j = i + 3
+            quads = ([verts[(i + k) % 6] for k in range(4)],
+                     [verts[(j + k) % 6] for k in range(4)])
+            dev = 0.0
+            for quad in quads:
+                for k in range(4):
+                    v0 = quad[k].co
+                    v1 = quad[(k + 1) % 4].co
+                    v2 = quad[(k + 2) % 4].co
+                    d1 = v1 - v0
+                    d2 = v2 - v1
+                    l1 = d1.length
+                    l2 = d2.length
+                    if l1 < MeshUtils.EPSILON_LENGTH or l2 < MeshUtils.EPSILON_LENGTH:
+                        continue
+                    dot = max(-1.0, min(1.0, d1.dot(d2) / (l1 * l2)))
+                    dev += abs(math.degrees(math.acos(dot)) - 90)
+            score = -weights.quad_perfection_weight * dev
+            if weights.short_edge_penalty_weight > 0.0:
+                max_len = max(e.calc_length() for e in face.edges)
+                if max_len > 0:
+                    cut_len = (verts[i].co - verts[j].co).length
+                    score -= weights.short_edge_penalty_weight * (1.0 - cut_len / max_len)
+            ops = [('diagonal_cut', face, verts[i], verts[j])]
+            candidates.append(SolutionCandidate(ops, score, {
+                'solver': 'hexagon', 'pattern': 'diag_%d' % i,
+                'quads_deviation': dev}))
 
         candidates.sort(key=lambda c: c.score, reverse=True)
         return candidates
@@ -795,6 +956,76 @@ class TopologyApplier:
             bm.edges.ensure_lookup_table()
             bm.faces.ensure_lookup_table()
         return result
+
+    @staticmethod
+    def tri_quad_merge(bm, tri, shared_edge, center_layer_name=CENTER_LAYER_NAME):
+        if not (tri is not None and tri.is_valid
+                and shared_edge is not None and shared_edge.is_valid):
+            return None
+        quad = None
+        for f in shared_edge.link_faces:
+            if f is not tri and f.is_valid and len(f.verts) == 4:
+                quad = f
+                break
+        if quad is None:
+            return None
+        apex = None
+        for v in tri.verts:
+            if v not in shared_edge.verts:
+                apex = v
+                break
+        if apex is None:
+            return None
+        far = None
+        for e in quad.edges:
+            if e is shared_edge:
+                continue
+            if (e.verts[0] not in shared_edge.verts
+                    and e.verts[1] not in shared_edge.verts):
+                far = e
+                break
+        if far is None:
+            return None
+        for f in far.link_faces:
+            if f is not quad and len(f.verts) >= 6:
+                return None
+
+        parent_count = 0
+        if center_layer_name:
+            layer = bm.faces.layers.int.get(center_layer_name)
+            if layer is not None:
+                parent_count = max(tri[layer], quad[layer])
+
+        m = TopologyApplier.split_edge(bm, far)
+        if m is None:
+            return None
+        bm.verts.ensure_lookup_table()
+        bmesh.ops.dissolve_edges(bm, edges=[shared_edge], use_verts=False)
+        bm.faces.ensure_lookup_table()
+
+        merged = None
+        for f in m.link_faces:
+            if f.is_valid and apex in f.verts and len(f.verts) >= 5:
+                merged = f
+                break
+        if merged is None:
+            return None
+
+        result = bmesh.utils.face_split(merged, apex, m)
+        bm.faces.ensure_lookup_table()
+        if not result:
+            return None
+
+        out = []
+        for item in result:
+            f = getattr(item, 'face', item)
+            if f is not None and f.is_valid:
+                out.append(f)
+                if center_layer_name and parent_count < 255:
+                    layer = bm.faces.layers.int.get(center_layer_name)
+                    if layer is not None:
+                        f[layer] = parent_count
+        return out
 
     @staticmethod
     def hexagon_center(bm, face, centroid_co, dissolve_indices, center_layer_name=CENTER_LAYER_NAME):
@@ -1101,6 +1332,14 @@ class TopologyApplier:
                     for f in r:
                         if f.is_valid:
                             affected.append(f)
+            elif kind == 'tri_quad_merge':
+                _, tri_face, shared_edge = op
+                r = TopologyApplier.tri_quad_merge(
+                    bm, tri_face, shared_edge, center_layer_name)
+                if r:
+                    for f in r:
+                        if f.is_valid:
+                            affected.append(f)
             elif kind == 'poke_tri':
                 _, face = op
                 parent_count = 0
@@ -1122,6 +1361,14 @@ class TopologyApplier:
                     for f in bm.faces:
                         if f.is_valid and len(f.verts) == 3:
                             affected.append(f)
+            elif kind == 'dissolve_vert':
+                _, face, v = op
+                bmesh.ops.dissolve_verts(bm, verts=[v])
+                bm.verts.ensure_lookup_table()
+                bm.edges.ensure_lookup_table()
+                bm.faces.ensure_lookup_table()
+                if face.is_valid:
+                    affected.append(face)
 
         bm.verts.index_update()
         bm.edges.index_update()
@@ -1141,8 +1388,12 @@ class TopologyApplier:
             elif kind == 'hexagon_center':
                 _, face, co, diss = op
                 idx_ops.append(('hexagon_center', face.index, co, diss))
+            elif kind == 'tri_quad_merge':
+                idx_ops.append(('tri_quad_merge', op[1].index, op[2].index))
             elif kind == 'poke_tri':
                 idx_ops.append(('poke_tri', op[1].index))
+            elif kind == 'dissolve_vert':
+                idx_ops.append(('dissolve_vert', op[1].index, op[2].index))
             else:
                 idx_ops.append(op)
         return idx_ops
@@ -1161,8 +1412,12 @@ class TopologyApplier:
                 ops.append(('diagonal_cut', bm.faces[op[1]], bm.verts[op[2]], bm.verts[op[3]]))
             elif kind == 'hexagon_center':
                 ops.append(('hexagon_center', bm.faces[op[1]], op[2], op[3]))
+            elif kind == 'tri_quad_merge':
+                ops.append(('tri_quad_merge', bm.faces[op[1]], bm.edges[op[2]]))
             elif kind == 'poke_tri':
                 ops.append(('poke_tri', bm.faces[op[1]]))
+            elif kind == 'dissolve_vert':
+                ops.append(('dissolve_vert', bm.faces[op[1]], bm.verts[op[2]]))
             else:
                 ops.append(op)
         return ops
@@ -1189,8 +1444,31 @@ class QuadrangulationEngine:
         self.reflex_lerp = reflex_lerp
         self.failed_sigs = set()
 
+    @staticmethod
+    def _orig_quad_keys_from_mesh(me, rounding=6):
+        """Face keys (rounded vertex coords) of the input mesh's quads.
+
+        Used to detect how many original quads survive a solve: a quad whose
+        coordinate key is still present at the end was never modified or merged.
+        Rounds to 6 decimals so untouched quads match exactly while relaxed
+        verts drift out of the set.
+        """
+        keys = set()
+        for poly in me.polygons:
+            if len(poly.vertices) == 4:
+                keys.add(frozenset(
+                    tuple(round(me.vertices[i].co[j], rounding) for j in range(3))
+                    for i in poly.vertices))
+        return keys
+
+    @staticmethod
+    def _face_key_rounded(face, rounding=6):
+        return frozenset(tuple(round(v.co[j], rounding) for j in range(3))
+                         for v in face.verts)
+
     def run(self):
         me = self.obj.data
+        orig_quad_keys = self._orig_quad_keys_from_mesh(me)
         bm = bmesh.new()
         bm.from_mesh(me)
         bm.verts.ensure_lookup_table()
@@ -1207,6 +1485,8 @@ class QuadrangulationEngine:
         bm.verts.ensure_lookup_table()
         bm.edges.ensure_lookup_table()
         bm.faces.ensure_lookup_table()
+
+        self._preprocess_concave(bm)
 
         stats = {'solved': 0, 'failed': 0, 'unsupported': 0, 'remaining': {}}
 
@@ -1237,7 +1517,7 @@ class QuadrangulationEngine:
                 self.failed_sigs.add((id(face), n_sides))
             else:
                 solver = solver_cls()
-                candidates = solver.solve(bm, face, self.w)
+                candidates = solver.solve(bm, face, self.w, orig_quad_keys)
 
                 if not candidates:
                     stats['failed'] += 1
@@ -1258,6 +1538,10 @@ class QuadrangulationEngine:
                                 max_edge_count=self.max_edge_count)
                         bm.faces.index_update()
                         stats['solved'] += 1
+                        # Topology changed: a face that failed earlier may now
+                        # be solvable. Only clear on actual progress so a fully
+                        # stuck mesh still terminates via an empty untagged set.
+                        self.failed_sigs.clear()
 
             self._reset_tags(bm)
 
@@ -1279,6 +1563,23 @@ class QuadrangulationEngine:
         for f in bm.faces:
             n = len(f.verts)
             f.tag = (n == 4 or n not in SOLVERS)
+
+    @staticmethod
+    def _preprocess_concave(bm):
+        """Triangulate concave input quads before the solve loop.
+
+        A concave quad can never be solved (n=4, not in SOLVERS) and the
+        end-of-pass fix would triangulate it into two unsolvable triangles.
+        Triangulating up front lets the triangle solvers recover them as
+        quads during the solve.
+        """
+        for f in list(bm.faces):
+            if f.is_valid and len(f.verts) == 4 and not MeshUtils.is_convex(f):
+                bmesh.ops.triangulate(bm, faces=[f], quad_method='SHORT_EDGE',
+                                      ngon_method='BEAUTY')
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
 
     def _find_untagged(self, bm):
         return [f for f in bm.faces
@@ -1346,6 +1647,10 @@ class QuadrangulationEngine:
             n = len(f.verts)
             if n < 3:
                 return True
+            if n > 6:
+                # Solvers only handle 3, 5 and 6 sides; a 7+ gon created during
+                # a pass can never be resolved and stays forever, so reject it.
+                return True
             if n > 3 and not MeshUtils.is_convex(f):
                 return True
             if f.calc_area() < self.min_area:
@@ -1364,31 +1669,41 @@ class QuadrangulationEngine:
         if not candidate or not candidate.operations:
             return False
         kinds = {op[0] for op in candidate.operations if op}
-        if not (kinds & {'quad_loop', 'diagonal_cut', 'hexagon_center'}):
+        if not (kinds & {'quad_loop', 'diagonal_cut', 'hexagon_center',
+                         'tri_quad_merge', 'dissolve_vert'}):
             return False
         copy = bm.copy()
         try:
-            old = set(copy.faces)
+            old = {self._face_key(f) for f in copy.faces}
             idx_ops = TopologyApplier._ops_to_indices(candidate.operations)
             ops_resolved = TopologyApplier._resolve_ops(copy, idx_ops)
             TopologyApplier.apply(copy, ops_resolved)
             copy.faces.ensure_lookup_table()
             copy.normal_update()
-            new_faces = [f for f in copy.faces if f not in old]
+            # Keyed by vertex coordinates, not wrapper identity: an operation
+            # may grow an existing face (e.g. edge split on a hexagon turning
+            # it into a 7-gon) and that must be treated as a bad new face too.
+            new_faces = [f for f in copy.faces if self._face_key(f) not in old]
             return self._new_faces_are_bad(copy, new_faces)
         except Exception:
             return True
         finally:
             copy.free()
 
+    @staticmethod
+    def _face_key(f):
+        return frozenset((round(v.co[0], 8), round(v.co[1], 8), round(v.co[2], 8))
+                         for v in f.verts)
+
     # =========================================================================
     # Multi-Start Greedy — run N independent greedy passes, keep best
     # =========================================================================
 
-    def _score_bmesh(self, bm):
+    def _score_bmesh(self, bm, orig_quad_keys=None):
         nq = 0
         concave = 0
         dev = 0.0
+        destroyed_orig = 0
         for f in bm.faces:
             if not f.is_valid:
                 continue
@@ -1398,9 +1713,14 @@ class QuadrangulationEngine:
                 if not MeshUtils.is_convex(f):
                     concave += 1
                 dev += MeshUtils.angle90_deviation(f)
+        if orig_quad_keys and self.w.original_quad_penalty_weight > 0.0:
+            present = {self._face_key_rounded(f) for f in bm.faces
+                       if f.is_valid and len(f.verts) == 4}
+            destroyed_orig = len(orig_quad_keys - present)
         return (-nq * (POLYGON_REACHED_BONUS * self.w.polygon_bonus_weight)
                 - concave * (POLYGON_REACHED_BONUS * self.w.adjacent_triangle_penalty_weight)
-                - dev * self.w.quad_perfection_weight)
+                - dev * self.w.quad_perfection_weight
+                - destroyed_orig * self.w.original_quad_penalty_weight)
 
     @staticmethod
     def _pick_randomized(bm, faces, rng, top_k=3, weights=None):
@@ -1431,6 +1751,7 @@ class QuadrangulationEngine:
         rng = random.Random(rng_seed)
         me = self.obj.data
         orig_faces = len(me.polygons)
+        orig_quad_keys = self._orig_quad_keys_from_mesh(me)
 
         best_bm = None
         best_score = float('-inf')
@@ -1448,6 +1769,8 @@ class QuadrangulationEngine:
             clayer = bm.faces.layers.int.new(CENTER_LAYER_NAME)
             for f in bm.faces:
                 f[clayer] = 0
+
+            self._preprocess_concave(bm)
 
             solved = 0
             failed = 0
@@ -1483,7 +1806,7 @@ class QuadrangulationEngine:
                     failed_sigs.add((id(face), n_sides))
                 else:
                     solver = solver_cls()
-                    candidates = solver.solve(bm, face, self.w)
+                    candidates = solver.solve(bm, face, self.w, orig_quad_keys)
                     if not candidates:
                         failed += 1
                         failed_sigs.add((id(face), n_sides))
@@ -1503,12 +1826,13 @@ class QuadrangulationEngine:
                                     max_edge_count=self.max_edge_count)
                             bm.faces.index_update()
                             solved += 1
+                            failed_sigs.clear()
 
                 for f in bm.faces:
                     n_side = len(f.verts)
                     f.tag = (n_side == 4 or n_side not in SOLVERS)
 
-            score = self._score_bmesh(bm)
+            score = self._score_bmesh(bm, orig_quad_keys)
             if score > best_score:
                 if best_bm is not None:
                     best_bm.free()
@@ -1548,6 +1872,7 @@ class QuadrangulationEngine:
         _w = self.w
         me = self.obj.data
         orig_faces = len(me.polygons)
+        orig_quad_keys = self._orig_quad_keys_from_mesh(me)
         bm_root = bmesh.new()
         bm_root.from_mesh(me)
         bm_root.verts.ensure_lookup_table()
@@ -1556,6 +1881,8 @@ class QuadrangulationEngine:
         clayer = bm_root.faces.layers.int.new(CENTER_LAYER_NAME)
         for f in bm_root.faces:
             f[clayer] = 0
+
+        self._preprocess_concave(bm_root)
 
         class _BeamState:
             __slots__ = ('bm', 'op_seq', 'failed_sigs', 'dead', 'w')
@@ -1638,7 +1965,7 @@ class QuadrangulationEngine:
                     if solver_cls is None:
                         continue
                     solver = solver_cls()
-                    candidates = solver.solve(bm, face, self.w)
+                    candidates = solver.solve(bm, face, self.w, orig_quad_keys)
                     if not candidates or candidates[0].score == float('-inf'):
                         continue
                     count = 0
@@ -1649,8 +1976,13 @@ class QuadrangulationEngine:
                         idx_ops = TopologyApplier._ops_to_indices(c.operations)
                         try:
                             ops_resolved = TopologyApplier._resolve_ops(child.bm, idx_ops)
-                            before = set(child.bm.faces)
+                            before = {self._face_key(f) for f in child.bm.faces}
                             affected = TopologyApplier.apply(child.bm, ops_resolved)
+                            child.bm.faces.ensure_lookup_table()
+                            # Keyed by vertex coordinates, not wrapper identity:
+                            # an op may grow an existing face into a 7+ gon.
+                            new_faces = [f for f in child.bm.faces
+                                         if self._face_key(f) not in before]
                             if self.max_relax > 0:
                                 MeshUtils.relax_faces(
                                     child.bm, affected, self.max_relax,
@@ -1660,7 +1992,6 @@ class QuadrangulationEngine:
                                     max_edge_count=self.max_edge_count)
                             child.bm.faces.ensure_lookup_table()
                             child.bm.normal_update()
-                            new_faces = [f for f in child.bm.faces if f not in before]
                             if self._new_faces_are_bad(child.bm, new_faces):
                                 child.free()
                                 continue
