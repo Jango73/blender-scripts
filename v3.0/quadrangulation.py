@@ -16,6 +16,30 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
+# NOTE — VERY IMPORTANT — DETERMINISM
+#
+# This module MUST stay deterministic: a given seed + same settings + same
+# mesh must always produce exactly the same result, no matter which Blender
+# process or when it runs.
+#
+# Pitfalls to avoid at all costs (each one has already caused unreproducible
+# results):
+#   - NEVER use id(x) on a bmesh object (BMVert/BMEdge/BMFace) as an identity
+#     key: it is the Python wrapper's memory address, reused arbitrarily by
+#     the garbage collector from one run to the next. Use x.index (stable as
+#     long as the topology is unchanged) or a stable logical signature.
+#   - NEVER iterate a set of bmesh objects (frozenset, set(...) of
+#     faces/verts/...) without sorting it by .index first: hashing is done by
+#     memory address, so iteration order depends on memory.
+#   - NEVER rely on the iteration order of link_faces/link_loops (or of
+#     bm.faces/bm.edges/bm.verts) to pick "the first" element: that order
+#     depends on the bmesh internal allocation.
+#   - After any topology operation, resync the indices
+#     (bm.faces.index_update() / ensure_lookup_table()) before using them.
+#
+# After any change touching these pitfalls, verify determinism with
+# temp/determinism_test.py (RUN1 must equal RUN2).
+
 bl_info = {
     "name": "Quadrangulation",
     "author": "Jango73",
@@ -30,6 +54,7 @@ import bmesh
 import math
 import random
 import heapq
+import time
 from mathutils import Vector
 
 # -----------------------------------------------------------------------------
@@ -438,6 +463,33 @@ class QuadLoopSearch:
         self.max_length = max_length
         self.max_branch_offs = max_branch_offs
         self._heap_counter = 0
+        # Per-instance caches: the mesh is static during a solve, so face
+        # angle-deviations and edge lengths are constant and recomputing them
+        # on every _expand was the dominant cost on dense meshes.
+        self._face_dev_cache = {}
+        self._edge_len_cache = {}
+        self._face_max_edge_len_cache = {}
+
+    def _edge_length(self, edge):
+        cached = self._edge_len_cache.get(edge.index)
+        if cached is None:
+            cached = edge.calc_length()
+            self._edge_len_cache[edge.index] = cached
+        return cached
+
+    def _face_max_edge_length(self, face):
+        cached = self._face_max_edge_len_cache.get(face.index)
+        if cached is None:
+            cached = max(self._edge_length(e) for e in face.edges)
+            self._face_max_edge_len_cache[face.index] = cached
+        return cached
+
+    def _face_deviation(self, face):
+        cached = self._face_dev_cache.get(face.index)
+        if cached is None:
+            cached = MeshUtils.angle90_deviation(face)
+            self._face_dev_cache[face.index] = cached
+        return cached
 
     @staticmethod
     def edge_is_valid(edge, for_traversal=False):
@@ -454,10 +506,10 @@ class QuadLoopSearch:
     def _short_edge_penalty(self, edge, face):
         if self.w.short_edge_penalty_weight <= 0.0:
             return 0.0
-        max_len = max(e.calc_length() for e in face.edges)
+        max_len = self._face_max_edge_length(face)
         if max_len <= 0:
             return 0.0
-        ratio = edge.calc_length() / max_len
+        ratio = self._edge_length(edge) / max_len
         return self.w.short_edge_penalty_weight * (1.0 - ratio)
 
     @staticmethod
@@ -583,7 +635,7 @@ class QuadLoopSearch:
         if not self.edge_is_valid(exit_edge, for_traversal=True):
             return
 
-        quad_dev = MeshUtils.angle90_deviation(node.quad_face)
+        quad_dev = self._face_deviation(node.quad_face)
         short_edge = self._short_edge_penalty(exit_edge, node.quad_face)
 
         new_path = list(node.path_edges) + [exit_edge]
@@ -1514,19 +1566,19 @@ class QuadrangulationEngine:
             solver_cls = SOLVERS.get(n_sides)
             if solver_cls is None:
                 stats['unsupported'] += 1
-                self.failed_sigs.add((id(face), n_sides))
+                self.failed_sigs.add((face.index, n_sides))
             else:
                 solver = solver_cls()
                 candidates = solver.solve(bm, face, self.w, orig_quad_keys)
 
                 if not candidates:
                     stats['failed'] += 1
-                    self.failed_sigs.add((id(face), n_sides))
+                    self.failed_sigs.add((face.index, n_sides))
                 else:
                     best = self._first_valid_candidate(bm, candidates)
                     if best is None:
                         stats['failed'] += 1
-                        self.failed_sigs.add((id(face), n_sides))
+                        self.failed_sigs.add((face.index, n_sides))
                     else:
                         affected = TopologyApplier.apply(bm, best.operations)
                         if self.max_relax > 0:
@@ -1584,7 +1636,7 @@ class QuadrangulationEngine:
     def _find_untagged(self, bm):
         return [f for f in bm.faces
                 if not f.tag and len(f.verts) != 4
-                and (id(f), len(f.verts)) not in self.failed_sigs
+                and (f.index, len(f.verts)) not in self.failed_sigs
                 and f.calc_area() >= self.min_area]
 
     @staticmethod
@@ -1672,28 +1724,109 @@ class QuadrangulationEngine:
         if not (kinds & {'quad_loop', 'diagonal_cut', 'hexagon_center',
                          'tri_quad_merge', 'dissolve_vert'}):
             return False
-        copy = bm.copy()
+
+        # Validate on a small patch of the affected region instead of copying
+        # the whole mesh: copying is O(mesh) per candidate, which dominates on
+        # big inputs. The patch is built from the faces the ops touch (plus a
+        # guard ring of the faces sharing their vertices, so edges used by the
+        # appliers keep their real link_faces), then the ops are replayed there
+        # with the same appliers, so the check is identical to a full copy.
+        seed = set()
+        for op in candidate.operations:
+            if not op:
+                continue
+            kind = op[0]
+            if kind == 'quad_loop':
+                for e in op[1]:
+                    seed.update(f for f in e.link_faces if f.is_valid)
+            elif kind == 'tri_quad_merge':
+                seed.update(f for f in op[2].link_faces if f.is_valid)
+                seed.add(op[1])
+            elif kind == 'dissolve_vert':
+                seed.update(f for f in op[2].link_faces if f.is_valid)
+                seed.add(op[1])
+            else:
+                seed.add(op[1])
+
+        # Deterministic patch construction: the patch is a replica of the
+        # affected region used purely to replay the candidate's ops. Sets of
+        # bmesh objects hash by memory address, so iterating them unordered
+        # produced layout-dependent patch element order (and, downstream,
+        # layout-dependent validation verdicts). Sort by index so the same
+        # mesh + candidate always builds an identical patch.
+        seed = sorted(seed, key=lambda f: f.index)
+        seed_verts = sorted(
+            {v for f in seed for v in f.verts}, key=lambda v: v.index)
+        region = set(seed)
+        for v in seed_verts:
+            region.update(f for f in v.link_faces if f.is_valid)
+        region = sorted(region, key=lambda f: f.index)
+        region_verts = sorted(
+            {v for f in region for v in f.verts}, key=lambda v: v.index)
+
+        patch = bmesh.new()
         try:
-            old = {self._face_key(f) for f in copy.faces}
-            idx_ops = TopologyApplier._ops_to_indices(candidate.operations)
-            ops_resolved = TopologyApplier._resolve_ops(copy, idx_ops)
-            TopologyApplier.apply(copy, ops_resolved)
-            copy.faces.ensure_lookup_table()
-            copy.normal_update()
-            # Keyed by vertex coordinates, not wrapper identity: an operation
-            # may grow an existing face (e.g. edge split on a hexagon turning
-            # it into a 7-gon) and that must be treated as a bad new face too.
-            new_faces = [f for f in copy.faces if self._face_key(f) not in old]
-            return self._new_faces_are_bad(copy, new_faces)
+            vmap = {v: patch.verts.new(v.co.copy()) for v in region_verts}
+            fmap = {}
+            for f in region:
+                fmap[f] = patch.faces.new([vmap[v] for v in f.verts])
+            patch.verts.ensure_lookup_table()
+            patch.edges.ensure_lookup_table()
+            patch.faces.ensure_lookup_table()
+
+            region_edges = sorted(
+                {e for f in region for e in f.edges}, key=lambda e: e.index)
+            edge_by_verts = {}
+            for pe in patch.edges:
+                edge_by_verts[frozenset(pe.verts)] = pe
+            emap = {}
+            for e in region_edges:
+                key = frozenset((vmap[e.verts[0]], vmap[e.verts[1]]))
+                if key in edge_by_verts:
+                    emap[e] = edge_by_verts[key]
+
+            ops_patch = []
+            for op in candidate.operations:
+                if not op:
+                    ops_patch.append(op)
+                    continue
+                kind = op[0]
+                if kind == 'quad_loop':
+                    edges = [emap[e] for e in op[1] if e in emap]
+                    if len(edges) != len(op[1]):
+                        return True
+                    ops_patch.append(('quad_loop', edges))
+                elif kind == 'diagonal_cut':
+                    ops_patch.append(
+                        ('diagonal_cut', fmap[op[1]], vmap[op[2]], vmap[op[3]]))
+                elif kind == 'hexagon_center':
+                    ops_patch.append(('hexagon_center', fmap[op[1]], op[2], op[3]))
+                elif kind == 'tri_quad_merge':
+                    ops_patch.append(('tri_quad_merge', fmap[op[1]], emap[op[2]]))
+                elif kind == 'poke_tri':
+                    ops_patch.append(('poke_tri', fmap[op[1]]))
+                elif kind == 'dissolve_vert':
+                    ops_patch.append(('dissolve_vert', fmap[op[1]], vmap[op[2]]))
+                else:
+                    ops_patch.append(op)
+
+            # Keyed by BMVert identity (not wrapper identity, not coordinates):
+            # an operation may grow an existing face (e.g. edge split on a
+            # hexagon turning it into a 7-gon) while keeping the same face
+            # object, and that must be treated as a bad new face too. The
+            # appliers never move existing vertices, so vert-identity sets are
+            # exact and far cheaper than rounding coordinates.
+            before = {f: frozenset(f.verts) for f in patch.faces}
+            TopologyApplier.apply(patch, ops_patch, center_layer_name='')
+            patch.faces.ensure_lookup_table()
+            patch.normal_update()
+            new_faces = [f for f in patch.faces
+                         if f not in before or frozenset(f.verts) != before[f]]
+            return self._new_faces_are_bad(patch, new_faces)
         except Exception:
             return True
         finally:
-            copy.free()
-
-    @staticmethod
-    def _face_key(f):
-        return frozenset((round(v.co[0], 8), round(v.co[1], 8), round(v.co[2], 8))
-                         for v in f.verts)
+            patch.free()
 
     # =========================================================================
     # Multi-Start Greedy — run N independent greedy passes, keep best
@@ -1789,7 +1922,7 @@ class QuadrangulationEngine:
 
                 polygons = [f for f in bm.faces
                             if not f.tag and len(f.verts) != 4
-                            and (id(f), len(f.verts)) not in failed_sigs
+                            and (f.index, len(f.verts)) not in failed_sigs
                             and f.calc_area() >= self.min_area]
                 if not polygons:
                     break
@@ -1803,18 +1936,18 @@ class QuadrangulationEngine:
                 solver_cls = SOLVERS.get(n_sides)
                 if solver_cls is None:
                     unsupported += 1
-                    failed_sigs.add((id(face), n_sides))
+                    failed_sigs.add((face.index, n_sides))
                 else:
                     solver = solver_cls()
                     candidates = solver.solve(bm, face, self.w, orig_quad_keys)
                     if not candidates:
                         failed += 1
-                        failed_sigs.add((id(face), n_sides))
+                        failed_sigs.add((face.index, n_sides))
                     else:
                         best = self._first_valid_candidate(bm, candidates)
                         if best is None:
                             failed += 1
-                            failed_sigs.add((id(face), n_sides))
+                            failed_sigs.add((face.index, n_sides))
                         else:
                             affected = TopologyApplier.apply(bm, best.operations)
                             if self.max_relax > 0:
@@ -1929,7 +2062,7 @@ class QuadrangulationEngine:
         def _find_untagged(bm, failed_sigs):
             return [f for f in bm.faces
                     if f.is_valid and not f.tag and len(f.verts) != 4
-                    and (id(f), len(f.verts)) not in failed_sigs
+                    and (f.index, len(f.verts)) not in failed_sigs
                     and f.calc_area() >= self.min_area]
 
         states = [_BeamState(bm_root)]
@@ -1976,13 +2109,13 @@ class QuadrangulationEngine:
                         idx_ops = TopologyApplier._ops_to_indices(c.operations)
                         try:
                             ops_resolved = TopologyApplier._resolve_ops(child.bm, idx_ops)
-                            before = {self._face_key(f) for f in child.bm.faces}
+                            before = {f: frozenset(f.verts) for f in child.bm.faces}
                             affected = TopologyApplier.apply(child.bm, ops_resolved)
                             child.bm.faces.ensure_lookup_table()
-                            # Keyed by vertex coordinates, not wrapper identity:
-                            # an op may grow an existing face into a 7+ gon.
+                            # Keyed by BMVert identity, not wrapper identity: an
+                            # op may grow an existing face into a 7+ gon.
                             new_faces = [f for f in child.bm.faces
-                                         if self._face_key(f) not in before]
+                                         if f not in before or frozenset(f.verts) != before[f]]
                             if self.max_relax > 0:
                                 MeshUtils.relax_faces(
                                     child.bm, affected, self.max_relax,
@@ -2133,7 +2266,9 @@ class MESH_OT_Quadrangulate(bpy.types.Operator):
             reflex_lerp=props.relax_reflex_lerp,
             relax_max_edge_count=props.relax_max_edge_count,
         )
+        t_start = time.perf_counter()
         stats = engine.multi_start_greedy(rng_seed=props.seed, num_runs=props.num_runs)
+        stats['elapsed'] = time.perf_counter() - t_start
 
         if was_edit:
             bpy.ops.object.mode_set(mode='EDIT')
@@ -2158,6 +2293,9 @@ class MESH_OT_Quadrangulate(bpy.types.Operator):
             parts.append("All quads")
         else:
             parts.append("Nothing to do — mesh is already all quads")
+        elapsed = stats.get('elapsed')
+        if elapsed is not None:
+            parts.append(f"Time: {elapsed:.2f}s")
         self.report({'INFO'}, " | ".join(parts))
 
 # -----------------------------------------------------------------------------
