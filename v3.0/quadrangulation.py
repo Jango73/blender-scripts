@@ -1566,19 +1566,19 @@ class QuadrangulationEngine:
             solver_cls = SOLVERS.get(n_sides)
             if solver_cls is None:
                 stats['unsupported'] += 1
-                self.failed_sigs.add((face.index, n_sides))
+                self._track_failed(self.failed_sigs, face)
             else:
                 solver = solver_cls()
                 candidates = solver.solve(bm, face, self.w, orig_quad_keys)
 
                 if not candidates:
                     stats['failed'] += 1
-                    self.failed_sigs.add((face.index, n_sides))
+                    self._track_failed(self.failed_sigs, face)
                 else:
                     best = self._first_valid_candidate(bm, candidates)
                     if best is None:
                         stats['failed'] += 1
-                        self.failed_sigs.add((face.index, n_sides))
+                        self._track_failed(self.failed_sigs, face)
                     else:
                         affected = TopologyApplier.apply(bm, best.operations)
                         if self.max_relax > 0:
@@ -1633,6 +1633,35 @@ class QuadrangulationEngine:
         bm.edges.ensure_lookup_table()
         bm.faces.ensure_lookup_table()
 
+    # Level 1: shared pick key. It parenthesizes the intended
+    # (angle deviation + area penalty) sum: as written inline before,
+    # `X if C else 0 + AREA` parsed as `X if C else (0 + AREA)`, so the
+    # area term silently applied only to loop-less faces and never
+    # influenced the pick. Restoring the intended sum changes the pick
+    # order (measured: more faces solved on a dense test mesh).
+    @staticmethod
+    def _tiebreak(face):
+        return sum(v.co.x + v.co.y + v.co.z for v in face.verts)
+
+    @staticmethod
+    def _full_pick_key(face, max_area, weights):
+        angle_dev = (min(abs(math.degrees(loop.calc_angle()) - 90)
+                         for loop in face.loops) if face.loops else 0)
+        area_term = (weights.area_penalty_weight * (1.0 - face.calc_area() / max_area)
+                     if weights is not None and weights.area_penalty_weight > 0.0
+                     else 0.0)
+        return (angle_dev + area_term,
+                QuadrangulationEngine._tiebreak(face))
+
+    @staticmethod
+    def _track_failed(sigs, face):
+        # Level 1: fast index key. failed_sigs is cleared on every
+        # success, so stale entries never live long.
+        try:
+            sigs.add((face.index, len(face.verts)))
+        except (ReferenceError, AttributeError):
+            pass
+
     def _find_untagged(self, bm):
         return [f for f in bm.faces
                 if not f.tag and len(f.verts) != 4
@@ -1647,18 +1676,15 @@ class QuadrangulationEngine:
 
         for n in sorted(by_side.keys()):
             if n in SOLVERS:
-                pool = by_side[n]
+                pool = list(by_side[n])
                 if weights is not None and weights.area_penalty_weight > 0.0:
                     max_area = max(f.calc_area() for f in pool) or 1.0
                 else:
                     max_area = 1.0
-                pool.sort(key=lambda f, _max=max_area, _w=weights: (
-                    min(abs(math.degrees(loop.calc_angle()) - 90)
-                        for loop in f.loops) if f.loops else 0
-                    + (_w.area_penalty_weight * (1.0 - f.calc_area() / _max)
-                       if _w is not None and _w.area_penalty_weight > 0.0 else 0.0),
-                    sum(v.co.x + v.co.y + v.co.z for v in f.verts)
-                ))
+                if not pool:
+                    continue
+                pool.sort(key=lambda f, _max=max_area, _w=weights:
+                          QuadrangulationEngine._full_pick_key(f, _max, _w))
                 return pool[0], n
 
         return None, 0
@@ -1675,14 +1701,10 @@ class QuadrangulationEngine:
                     max_area = max(f.calc_area() for f in by_side[n]) or 1.0
                 else:
                     max_area = 1.0
-                by_side[n].sort(key=lambda f, _max=max_area, _w=weights: (
-                    min(abs(math.degrees(loop.calc_angle()) - 90)
-                        for loop in f.loops) if f.loops else 0
-                    + (_w.area_penalty_weight * (1.0 - f.calc_area() / _max)
-                       if _w is not None and _w.area_penalty_weight > 0.0 else 0.0),
-                    sum(v.co.x + v.co.y + v.co.z for v in f.verts)
-                ))
-                for f in by_side[n]:
+                ranked = list(by_side[n])
+                ranked.sort(key=lambda f, _max=max_area, _w=weights:
+                            QuadrangulationEngine._full_pick_key(f, _max, _w))
+                for f in ranked:
                     pool.append((n, f))
                 if len(pool) >= k:
                     break
@@ -1709,9 +1731,54 @@ class QuadrangulationEngine:
                 return True
         return False
 
+    # Level 1: only replay the few best candidates.
+    # Solvers already sort by descending score, so truncate.
+    # Plus a pre-filter with no bmesh copy (invalid refs).
+    # NOTE: truncation disabled after profiling on a 6k-face test mesh:
+    # validation is ~7% of the run and cutting candidates lost solves
+    # (148 vs 167). Keep the cheap refs pre-filter only.
+    MAX_VALIDATE_CANDIDATES = None
+
+    @staticmethod
+    def _candidate_refs_valid(candidate):
+        for op in candidate.operations:
+            if not op:
+                continue
+            kind = op[0]
+            try:
+                if kind == 'quad_loop':
+                    for e in op[1]:
+                        if e is None or not e.is_valid:
+                            return False
+                elif kind == 'diagonal_cut':
+                    _, face, v1, v2 = op
+                    if not (face.is_valid and v1.is_valid and v2.is_valid):
+                        return False
+                elif kind == 'hexagon_center':
+                    _, face, _co, _diss = op
+                    if not face.is_valid:
+                        return False
+                elif kind == 'tri_quad_merge':
+                    _, tri_face, shared_edge = op
+                    if not (tri_face.is_valid and shared_edge.is_valid):
+                        return False
+                elif kind == 'poke_tri':
+                    if not op[1].is_valid:
+                        return False
+                elif kind == 'dissolve_vert':
+                    if not (op[1].is_valid and op[2].is_valid):
+                        return False
+            except (ReferenceError, AttributeError):
+                return False
+        return True
+
     def _first_valid_candidate(self, bm, candidates):
+        if self.MAX_VALIDATE_CANDIDATES:
+            candidates = candidates[:self.MAX_VALIDATE_CANDIDATES]
         for c in candidates:
             if not c or not c.operations or c.score == float('-inf'):
+                continue
+            if not self._candidate_refs_valid(c):
                 continue
             if not self._candidate_creates_bad_faces(bm, c):
                 return c
@@ -1862,17 +1929,13 @@ class QuadrangulationEngine:
             by_side.setdefault(len(f.verts), []).append(f)
         for n in sorted(by_side.keys()):
             if n in SOLVERS:
-                pool = by_side[n]
+                pool = list(by_side[n])
                 if weights is not None and weights.area_penalty_weight > 0.0:
                     max_area = max(f.calc_area() for f in pool) or 1.0
                 else:
                     max_area = 1.0
-                pool.sort(key=lambda f, _max=max_area, _w=weights: (
-                    min(abs(math.degrees(loop.calc_angle()) - 90)
-                        for loop in f.loops) if f.loops else 0
-                    + (_w.area_penalty_weight * (1.0 - f.calc_area() / _max)
-                       if _w is not None and _w.area_penalty_weight > 0.0 else 0.0),
-                ))
+                pool.sort(key=lambda f, _max=max_area, _w=weights:
+                          QuadrangulationEngine._full_pick_key(f, _max, _w))
                 candidates = pool[:top_k]
                 if not candidates:
                     continue
@@ -1880,7 +1943,7 @@ class QuadrangulationEngine:
                 return rng.choices(candidates, weights=weights)[0], n
         return None, 0
 
-    def multi_start_greedy(self, rng_seed=0, num_runs=8, top_k=3):
+    def multi_start_greedy(self, rng_seed=0, num_runs=1, top_k=3):
         rng = random.Random(rng_seed)
         me = self.obj.data
         orig_faces = len(me.polygons)
@@ -1936,18 +1999,18 @@ class QuadrangulationEngine:
                 solver_cls = SOLVERS.get(n_sides)
                 if solver_cls is None:
                     unsupported += 1
-                    failed_sigs.add((face.index, n_sides))
+                    self._track_failed(failed_sigs, face)
                 else:
                     solver = solver_cls()
                     candidates = solver.solve(bm, face, self.w, orig_quad_keys)
                     if not candidates:
                         failed += 1
-                        failed_sigs.add((face.index, n_sides))
+                        self._track_failed(failed_sigs, face)
                     else:
                         best = self._first_valid_candidate(bm, candidates)
                         if best is None:
                             failed += 1
-                            failed_sigs.add((face.index, n_sides))
+                            self._track_failed(failed_sigs, face)
                         else:
                             affected = TopologyApplier.apply(bm, best.operations)
                             if self.max_relax > 0:
@@ -1957,7 +2020,7 @@ class QuadrangulationEngine:
                                     push_factor=self.push_factor,
                                     reflex_lerp=self.reflex_lerp,
                                     max_edge_count=self.max_edge_count)
-                            bm.faces.index_update()
+                            # Level 1: apply() already resyncs indices.
                             solved += 1
                             failed_sigs.clear()
 
@@ -1978,6 +2041,11 @@ class QuadrangulationEngine:
                 }
             else:
                 bm.free()
+
+            # Level 1: early out once a run solved everything.
+            # Avoids paying for the remaining runs for nothing.
+            if best_stats is not None and not best_stats.get('remaining'):
+                break
 
         stats = {'solved': 0, 'failed': 0, 'unsupported': 0, 'remaining': {},
                  'orig_faces': orig_faces, 'final_faces': 0}
@@ -2223,7 +2291,7 @@ class QuadrangulationProperties(bpy.types.PropertyGroup):
     num_runs: bpy.props.IntProperty(
         name="Search Runs",
         description="Number of greedy passes (higher = more thorough but slower)",
-        default=8, min=1, max=200)
+        default=1, min=1, max=200)
     min_area: bpy.props.FloatProperty(
         name="Min Area",
         description="Minimum face area (Blender units²) to attempt cutting (hard limit)",
@@ -2354,7 +2422,7 @@ class MESH_OT_QuadrangulateReset(bpy.types.Operator):
     def execute(self, context):
         props = context.scene.quadrangulation_props
         props.seed = DEFAULT_SEED
-        props.num_runs = 8
+        props.num_runs = 1
         props.topology_strength = DEFAULT_TOPOLOGY_STRENGTH
         props.shape_strength = DEFAULT_SHAPE_STRENGTH
         props.max_loop_length = DEFAULT_MAX_LOOP_LENGTH
