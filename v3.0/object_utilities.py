@@ -19,7 +19,7 @@
 bl_info = {
     "name": "Object utilities",
     "author": "Jango73",
-    "version": (3, 5),
+    "version": (3, 6),
     "blender": (3, 0, 0),
     "description": "Operations on objects",
     "category": "Object",
@@ -33,6 +33,7 @@ import copy
 import os
 import tempfile
 from datetime import datetime
+from mathutils import Vector
 from mathutils.kdtree import KDTree
 
 # -------------------------------------------------------------------
@@ -1438,6 +1439,7 @@ class OBJECT_PT_GeneralUtilities(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Edit"
+    bl_context = 'objectmode'
     bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
@@ -1450,6 +1452,15 @@ class OBJECT_PT_GeneralUtilities(bpy.types.Panel):
         row = layout.row()
         row.alert = True
         row.operator("scene.multi_reload")
+
+        box = layout.box()
+        box.label(text="Dolly zoom (keep framing)", icon='CAMERA_DATA')
+        props = context.scene.camera_dolly_zoom
+        box.prop(props, "camera", text="Camera")
+        box.prop(props, "focus_target", text="Target")
+        box.prop(props, "dolly_distance", text="Dolly (m)")
+        op = box.operator("object.dolly_zoom_keep_framing")
+        op.dolly_distance = props.dolly_distance
 
 class OBJECT_PT_ObjectEditUtilities(bpy.types.Panel):
     bl_idname = "OBJECT_PT_ObjectEditUtilities"
@@ -1903,6 +1914,160 @@ class ModifierReplacementProperties(bpy.types.PropertyGroup):
     )
 
 
+# -----------------------------------------------------------------------------
+# Dolly zoom (travelling compense) : avance/recule la camera sur son axe Z
+# local en recalculant la focale pour garder un cadrage identique.
+#
+# Geometrie : pour un plan sujet a distance D de la camera (mesuree le long
+# de l'axe de visee), la taille apparente est proportionnelle a f / D
+# (f = focale en mm). Pour garder le cadrage : f_new = f_old * D_new / D_old.
+# D est pris sur le plan de focus : Target explicite > focus_object du DOF >
+# focus_distance du DOF. Apres le mouvement, focus_distance suit le sujet.
+
+def _poll_camera_object(self, obj):
+    return obj.type == 'CAMERA'
+
+
+class CameraDollyZoomProperties(bpy.types.PropertyGroup):
+    camera: bpy.props.PointerProperty(
+        name="Camera",
+        description="Camera to dolly (empty = scene camera or active camera object)",
+        type=bpy.types.Object,
+        poll=_poll_camera_object,
+    )
+    focus_target: bpy.props.PointerProperty(
+        name="Target",
+        description="Subject plane to keep identically framed (empty = camera DOF focus object / focus distance)",
+        type=bpy.types.Object,
+    )
+    dolly_distance: bpy.props.FloatProperty(
+        name="Dolly",
+        description="Distance in meters along camera local Z. Positive = forward (dolly-in), negative = backward (dolly-out)",
+        default=1.0,
+        precision=3,
+        step=10,
+    )
+
+
+def _resolve_dolly_camera(context, props):
+    cam_obj = props.camera
+    if cam_obj is not None and cam_obj.type == 'CAMERA':
+        return cam_obj
+    active = context.active_object
+    if active is not None and active.type == 'CAMERA':
+        return active
+    scene_cam = context.scene.camera
+    if scene_cam is not None and scene_cam.type == 'CAMERA':
+        return scene_cam
+    return None
+
+
+def _subject_distance(cam_obj, cam_data, focus_target):
+    cam_pos = cam_obj.matrix_world.translation
+    forward = (-cam_obj.matrix_world.col[2].xyz).normalized()
+    target = focus_target
+    if target is None:
+        try:
+            if cam_data.dof.focus_object is not None:
+                target = cam_data.dof.focus_object
+        except:
+            target = None
+    if target is not None:
+        to_target = target.matrix_world.translation - cam_pos
+        return forward.dot(to_target), target.name
+    focus_dist = float(cam_data.dof.focus_distance)
+    return focus_dist, "focus_distance"
+
+
+def dollyZoomKeepFraming(self, context, dolly_distance):
+    props = context.scene.camera_dolly_zoom
+    cam_obj = _resolve_dolly_camera(context, props)
+    if cam_obj is None:
+        self.report({'ERROR'}, "No camera found (set one, select one, or set scene camera)")
+        return {'CANCELLED'}
+
+    cam_data = cam_obj.data
+    if cam_data.type != 'PERSP':
+        self.report({'ERROR'}, "Only perspective cameras are supported (ortho/pano have no focal length)")
+        return {'CANCELLED'}
+
+    try:
+        target_override = props.focus_target
+    except:
+        target_override = None
+
+    d_old, ref_name = _subject_distance(cam_obj, cam_data, target_override)
+    if d_old <= 0.0:
+        self.report({'ERROR'}, f"Subject '{ref_name}' is behind the camera, cannot keep framing")
+        return {'CANCELLED'}
+
+    d_new = d_old - dolly_distance
+    if d_new < 0.05:
+        self.report({'ERROR'}, f"Dolly too large: subject distance would go {d_old:.3f}m -> {d_new:.3f}m (min 0.05m)")
+        return {'CANCELLED'}
+
+    f_old = float(cam_data.lens)
+    f_new = f_old * d_new / d_old
+    # Blender lens limits : clamp pour eviter une valeur rejetee
+    f_clamped = max(1.0, min(5000.0, f_new))
+
+    cam_pos = cam_obj.matrix_world.translation.copy()
+    forward = (-cam_obj.matrix_world.col[2].xyz).normalized()
+    delta_world = forward * dolly_distance
+    if cam_obj.parent is None:
+        cam_obj.location += Vector(delta_world)
+    else:
+        try:
+            delta_local = cam_obj.parent.matrix_world.inverted().to_3x3() @ Vector(delta_world)
+        except:
+            delta_local = Vector(delta_world)
+        cam_obj.location += delta_local
+    # Sanity : la matrice monde doit avoir bouge, sinon fallback direct
+    new_pos = cam_obj.matrix_world.translation
+    if (new_pos - (cam_pos + Vector(delta_world))).length > 1e-4:
+        # Cas d'une contrainte/parent complexe : on force via translation monde inverse
+        try:
+            cam_obj.matrix_world.translation = cam_pos + Vector(delta_world)
+        except:
+            pass
+
+    cam_data.lens = f_clamped
+
+    # Le plan de focus suit le sujet pour garder le point net
+    try:
+        if cam_data.dof.focus_object is None:
+            cam_data.dof.focus_distance = d_new
+    except:
+        pass
+
+    msg = f"Dolly {dolly_distance:+.3f}m ({ref_name} {d_old:.3f}m -> {d_new:.3f}m), lens {f_old:.2f}mm -> {f_clamped:.2f}mm"
+    if abs(f_new - f_clamped) > 1e-6:
+        msg += f" (clamped, computed {f_new:.2f}mm)"
+        self.report({'WARNING'}, msg)
+    else:
+        self.report({'INFO'}, msg)
+    return {'FINISHED'}
+
+
+class OBJECT_OT_DollyZoomKeepFraming(bpy.types.Operator):
+    """Dolly zoom keep framing"""
+    bl_idname = "object.dolly_zoom_keep_framing"
+    bl_label = "Dolly + keep framing"
+    bl_description = "Move camera along its local Z and recompute focal length so framing stays identical (dolly-zoom). Positive = forward"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    dolly_distance: bpy.props.FloatProperty(
+        name="Dolly",
+        description="Distance in meters along camera local Z. Positive = forward (dolly-in), negative = backward (dolly-out)",
+        default=1.0,
+        precision=3,
+        step=10,
+    )
+
+    def execute(self, context):
+        return dollyZoomKeepFraming(self, context, self.dolly_distance)
+
+
 def _has_sky_texture(context):
     world = context.scene.world
     if world is None or not world.use_nodes or world.node_tree is None:
@@ -2104,6 +2269,7 @@ def register():
     bpy.utils.register_class(OBJECT_OT_SelectMergeByDistance)
     bpy.utils.register_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.register_class(OBJECT_OT_ReplaceObjectInModifiers)
+    bpy.utils.register_class(OBJECT_OT_DollyZoomKeepFraming)
 #    bpy.utils.register_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(SCENE_OT_PauseRender)
@@ -2118,6 +2284,8 @@ def register():
     bpy.types.Scene.camera_exposure = bpy.props.PointerProperty(type=CameraExposureProperties)
     bpy.utils.register_class(ModifierReplacementProperties)
     bpy.types.Scene.modifier_replacement = bpy.props.PointerProperty(type=ModifierReplacementProperties)
+    bpy.utils.register_class(CameraDollyZoomProperties)
+    bpy.types.Scene.camera_dolly_zoom = bpy.props.PointerProperty(type=CameraDollyZoomProperties)
     bpy.utils.register_class(SCENE_OT_ApplySunToSky)
     bpy.utils.register_class(SCENE_OT_ApplyCameraExposure)
 
@@ -2167,6 +2335,7 @@ def unregister():
     bpy.utils.unregister_class(OBJECT_OT_SelectMergeByDistance)
     bpy.utils.unregister_class(OBJECT_OT_CleanUpMaterialsAndImages)
     bpy.utils.unregister_class(OBJECT_OT_ReplaceObjectInModifiers)
+    bpy.utils.unregister_class(OBJECT_OT_DollyZoomKeepFraming)
 #    bpy.utils.unregister_class(OBJECT_OT_RotateFaceVertexIndices)
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(SCENE_OT_PauseRender)
@@ -2175,6 +2344,8 @@ def unregister():
 
     bpy.utils.unregister_class(SCENE_OT_ApplySunToSky)
     bpy.utils.unregister_class(SCENE_OT_ApplyCameraExposure)
+    del bpy.types.Scene.camera_dolly_zoom
+    bpy.utils.unregister_class(CameraDollyZoomProperties)
     del bpy.types.Scene.modifier_replacement
     bpy.utils.unregister_class(ModifierReplacementProperties)
     del bpy.types.Scene.sun_calculator
