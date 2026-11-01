@@ -1355,6 +1355,42 @@ class SCENE_OT_MultiReload(bpy.types.Operator):
         bpy.ops.wm.open_mainfile('EXEC_DEFAULT', filepath=bpy.data.filepath)
         return {'FINISHED'}
 
+class SCENE_OT_SettleSimulation(bpy.types.Operator):
+    """Step back and forth to settle simulation"""
+    bl_idname = "scene.settle_simulation"
+    bl_label = "Settle simulation"
+    bl_description = "Go to previous frame then back 5 times, to let hair/cloth fall to a rest pose"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    iterations: bpy.props.IntProperty(
+        name="Iterations",
+        description="Number of back-and-forth frame steps",
+        default=5,
+        min=1,
+        max=20,
+    )
+
+    def execute(self, context):
+        scene = context.scene
+        if scene is None:
+            self.report({'ERROR'}, "No scene found")
+            return {'CANCELLED'}
+
+        current = scene.frame_current
+        prev = current - 1
+        if prev < scene.frame_start:
+            # At start frame : oscillate forward instead of backward
+            prev = current + 1
+
+        for _ in range(self.iterations):
+            scene.frame_set(prev)
+            context.view_layer.update()
+            scene.frame_set(current)
+            context.view_layer.update()
+
+        self.report({'INFO'}, f"Settled simulation ({self.iterations}x)")
+        return {'FINISHED'}
+
 # -----------------------------------------------------------------------------
 # Panels
 
@@ -1452,6 +1488,10 @@ class OBJECT_PT_GeneralUtilities(bpy.types.Panel):
         row = layout.row()
         row.alert = True
         row.operator("scene.multi_reload")
+
+        box = layout.box()
+        box.label(text="Simulation", icon='PHYSICS')
+        box.operator("scene.settle_simulation")
 
         box = layout.box()
         box.label(text="Dolly zoom (keep framing)", icon='CAMERA_DATA')
@@ -2274,6 +2314,7 @@ def register():
     bpy.utils.register_class(SCENE_OT_ToggleRenderers)
     bpy.utils.register_class(SCENE_OT_PauseRender)
     bpy.utils.register_class(SCENE_OT_MultiReload)
+    bpy.utils.register_class(SCENE_OT_SettleSimulation)
     bpy.app.handlers.load_post.append(_on_load_multi_reload)
 
     bpy.utils.register_class(SunCalculatorProperties)
@@ -2340,6 +2381,7 @@ def unregister():
     bpy.utils.unregister_class(SCENE_OT_ToggleRenderers)
     bpy.utils.unregister_class(SCENE_OT_PauseRender)
     bpy.utils.unregister_class(SCENE_OT_MultiReload)
+    bpy.utils.unregister_class(SCENE_OT_SettleSimulation)
     bpy.app.handlers.load_post.remove(_on_load_multi_reload)
 
     bpy.utils.unregister_class(SCENE_OT_ApplySunToSky)
